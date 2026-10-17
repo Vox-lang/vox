@@ -1,0 +1,1 @@
+fini_array.asm:2: the section .fini_array is only used by shared builds, which vas does not assemble: shared builds still use nasm

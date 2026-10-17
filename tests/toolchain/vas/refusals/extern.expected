@@ -1,0 +1,1 @@
+extern.asm:3: extern is only used by shared builds, which vas does not assemble: shared builds still use nasm

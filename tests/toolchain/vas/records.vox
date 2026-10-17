@@ -1,0 +1,120 @@
+(records - the statement records the vas front end makes, written out for
+ the structure check: one line for each instruction, holding where it was
+ written, its mnemonic, and each of its operands as the front end parsed
+ it, separated by tabs. An operand is written as one of
+
+   reg NAME
+   mem SIZE base=BASE index=INDEX scale=SCALE rel=0|1 disp=VALUE
+   imm SIZE VALUE
+
+ where SIZE is the size word, or - for none, and VALUE is the number the
+ front end worked out, or ? when it waits on a label for the encoder.
+
+ Usage: records <source .asm> <coreasm directory> <output path> [<definitions>]
+
+ Exits 0 when the dump was written, 1 when vas found errors in the source,
+ which go to standard error, or when the dump cannot be written, and 2 on
+ a usage error.)
+
+see "../../../tools/vas/vas.vox".
+
+(How an operand the front end parsed is written in the dump.)
+To 'the operand signature of' of a map called operand.
+  a text called 'operand kind' is operand's "kind".
+  a text called 'size word' is operand's "size".
+  If 'size word' is "" then, set 'size word' to "-".
+  a text called signature is "".
+  If 'operand kind' is "register" then, set signature to 'the register signature of' of operand.
+  If 'operand kind' is "memory" then, set signature to 'the memory signature' with operand and 'size word'.
+  If 'operand kind' is "expression" then, set signature to 'the expression signature' with operand and 'size word'.
+  Return a text, signature.
+
+To 'the register signature of' of a map called operand.
+  a text called 'register name' is operand's "register".
+  a text called signature is "".
+  Set signature to "reg {register name}".
+  Return a text, signature.
+
+To 'the memory signature' with a map called operand and a text called 'size word'.
+  a text called 'base register' is operand's "base".
+  a text called 'index register' is operand's "index".
+  a number called 'index scale' is operand's "scale".
+  a boolean called 'it is relative' is operand's "relative".
+  a number called 'relative mark' is 0.
+  If 'it is relative' then, set 'relative mark' to 1.
+  a boolean called 'the displacement is known' is operand's "displacement is constant".
+  a number called 'displacement value' is operand's "displacement value".
+  a text called 'displacement written' is "?".
+  If 'the displacement is known' then, set 'displacement written' to "{displacement value}".
+  a text called signature is "".
+  Set signature to "mem {size word} base={base register} index={index register} scale={index scale} rel={relative mark} disp={displacement written}".
+  Return a text, signature.
+
+To 'the expression signature' with a map called operand and a text called 'size word'.
+  a boolean called 'the value is known' is operand's "is constant".
+  a number called 'known value' is operand's "value".
+  a text called 'value written' is "?".
+  If 'the value is known' then, set 'value written' to "{known value}".
+  a text called signature is "".
+  Set signature to "imm {size word} {value written}".
+  Return a text, signature.
+
+(One line of the dump for the record at this position, if it is an
+ instruction.)
+To 'write the instruction' with a list called records and a number called 'record position' and a buffer called dump.
+  a map called record is element 'record position' of records.
+  a text called 'record kind' is record's "kind".
+  If 'record kind' is not "instruction" then, Return.
+  a text called 'file written in' is record's "file".
+  a number called 'line written on' is record's "line".
+  a text called 'mnemonic written' is record's "mnemonic".
+  a list called 'the operands' is record's "operands".
+  append "{file written in}:{line written on}\t{mnemonic written}" to dump.
+  For each 'operand position' from 1 to 'the operands''s length,
+    a map called operand is element 'operand position' of 'the operands',
+    a text called signature is 'the operand signature of' of operand,
+    append "\t{signature}" to dump.
+  append "\n" to dump.
+
+(Each global here has a name that no function in vas.vox gives a variable
+ of another type. Vox refuses a function's variable whose type differs
+ from a global declared above the function, where the manual says the
+ variable shadows the global: a Vox bug, reported, not yet numbered.
+ vas.vox is seen above every global, so the bug cannot reach it, and the
+ names are kept apart so that it never will.)
+
+(A number after at borrows the descriptor the process already has rather
+ than opening a path, so there is nothing here that can fail.)
+Open a file for writing called 'standard error' at 2.
+
+a list called 'the command arguments' is [].
+append each 'command argument' from arguments's all to 'the command arguments'.
+a number called 'how many were given' is 'the command arguments''s length.
+a number called 'the fewest arguments' is 3.
+a number called 'the most arguments' is 4.
+
+If 'how many were given' is less than 'the fewest arguments' or 'how many were given' is greater than 'the most arguments' then,
+    Write "usage: records <source .asm> <coreasm directory> <output path> [<definitions>]\n" to 'standard error',
+    Exit 2.
+
+a text called 'the source to read' is element 1 of 'the command arguments'.
+a text called 'the coreasm to use' is element 2 of 'the command arguments'.
+a text called 'the dump to write' is element 3 of 'the command arguments'.
+a text called 'the names to define' is "".
+If 'how many were given' is 'the most arguments' then, set 'the names to define' to element 4 of 'the command arguments'.
+
+a map called 'what vas knows' is {}.
+a list called 'the statement records' is [].
+Create a buffer called 'the messages'.
+a number called 'the error count' is 'read the source' with 'the source to read' and 'the coreasm to use' and 'the names to define' and 'what vas knows' and 'the statement records' and 'the messages'.
+If 'the error count' is greater than 0 then,
+    Write 'the messages' to 'standard error',
+    Exit 1.
+
+Create a buffer called 'the dump'.
+For each 'the record position' from 1 to 'the statement records''s length,
+    'write the instruction' with 'the statement records' and 'the record position' and 'the dump'.
+Open a file for writing called 'the dump file' at 'the dump to write'.
+On error print "records: cannot write the dump to {the dump to write}.", exit 1.
+Write 'the dump' to 'the dump file'.
+Close 'the dump file'.

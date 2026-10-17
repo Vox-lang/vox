@@ -1,0 +1,2251 @@
+(vas - the Vox assembler.
+
+ vas reads the NASM-dialect assembly the Vox compiler writes and turns it
+ into machine code for the voxelf linker. This file is its front end: it
+ reads a source file and everything it includes, runs the preprocessor,
+ follows the sections, and parses every statement into a record that the
+ encoder reads. It accepts exactly the NASM constructs found in the
+ compiler's output and in coreasm, and refuses everything else by name,
+ with the file and the line.
+
+ The public entries take and return only paths, numbers and texts, so a
+ host that is not Vox can call them:
+
+   'expand file' of <source .asm> and <coreasm directory> and <output path>
+       Preprocesses the source and writes what it expands to, one statement
+       per line, to the output path. Answers the number of errors: 0 when
+       the expansion was written.
+
+   'expand file with definitions' of the same three and <definitions>
+       The same, with single-line macros defined before the source is
+       read, as nasm's -D option defines them. The definitions are words
+       separated by spaces, each NAME or NAME=VALUE.
+
+   'assembler diagnostics' of <output path>
+       The messages of the last call that wrote to that output path, one
+       per line, each in the form <file>:<line>: <message>.
+
+ A shared library keeps nothing between calls, since only functions may
+ stand at its top level, so a call writes its messages to a file beside
+ its output, <output path>.diagnostics, and 'assembler diagnostics' reads
+ them back from there. A failing call never writes the output itself.
+
+ A Vox program can skip the files: 'read the source' fills a list with one
+ record per statement and a buffer with the messages.
+
+ Four things always travel together through the functions inside: the
+ diagnostics buffer, the map called 'what vas knows', the source name and
+ the line number. They go as separate arguments rather than as one map for
+ the place in the source, because every map Vox makes is kept until the
+ program ends, so a map made for each line would add to the memory every
+ line already costs.
+
+ Build and consume:
+   vox vas.vox --shared -o libvas.so
+   see vas version "0.1" from "./libvas.lib".
+ or pull the source in directly, as a static program does:
+   see "./vas.vox".)
+
+Library 'vas' version "0.1".
+
+(--- Diagnostics -----------------------------------------------------------)
+
+(Every message the front end gives is an error, written the way a compiler
+ writes one: the file, the line, and what is wrong there. They gather in
+ one buffer, and 'what vas knows' keeps count of them.)
+To complain with a buffer called diagnostics and a map called 'what vas knows' and a text called 'source name' and a number called 'line number' and a text called complaint.
+  append "{source name}:{line number}: {complaint}\n" to diagnostics.
+  a number called errors is 'what vas knows''s "errors".
+  Set 'what vas knows''s "errors" to errors add 1.
+
+(The message for a NASM construct vas does not take, naming it.)
+To 'the refusal message of' of a text called construct.
+  a text called refusal is "".
+  Set refusal to "{construct} is outside the NASM subset vas accepts".
+  Return a text, refusal.
+
+(The message for a construct only a shared library build uses.)
+To 'the shared build refusal message of' of a text called construct.
+  a text called refusal is "".
+  Set refusal to "{construct} is only used by shared builds, which vas does not assemble: shared builds still use nasm".
+  Return a text, refusal.
+
+(--- Named numbers ---------------------------------------------------------)
+
+(A library has no top-level statements, so it has no constants of its
+ own; each number with a meaning is a function that answers it.)
+
+(The single quote mark, which a character literal cannot spell.)
+To 'single quote mark'.
+  Return a number, 39.
+
+(How deeply %include, multi-line macros and single-line macros may nest,
+ as in NASM, which also stops a file or a macro that uses itself.)
+To 'deepest nesting'.
+  Return a number, 16.
+
+(The most arguments a macro written N-* takes.)
+To 'no limit'.
+  Return a number, -1.
+
+(How many words a %macro line holds: %macro, the name and the count. An
+ open count, N-*, is three words of its own.)
+To 'words in a macro line with a fixed count'.
+  Return a number, 3.
+
+To 'words in a macro line with an open count'.
+  Return a number, 5.
+
+(Where the words after a leading word begin: the expression after %if,
+ %rep, %rotate or times, and the name after section.)
+To 'the position after the leading word'.
+  Return a number, 2.
+
+(A character constant is read into one quadword, so it holds at most
+ eight bytes.)
+To 'most bytes in a character constant'.
+  Return a number, 8.
+
+To 'bits in a byte'.
+  Return a number, 8.
+
+(A quoted file name holds its two quote marks and at least one byte
+ between them.)
+To 'fewest bytes in a quoted name'.
+  Return a number, 3.
+
+(How long the 0x or 0o in front of a hexadecimal or octal number is.)
+To 'the length of a radix prefix'.
+  Return a number, 2.
+
+(What a single-line macro's name stands for in 'what vas knows'. A name
+ with no definition stands for 0.)
+To 'definition without parameters'.
+  Return a number, 1.
+
+To 'definition with parameters'.
+  Return a number, 2.
+
+(Where a condition stands, in its frame on the conditions list.)
+To 'waiting for its else'.
+  Return a number, 0.
+
+To 'keeping its lines'.
+  Return a number, 1.
+
+To 'finished keeping'.
+  Return a number, 2.
+
+(The kinds of word in the vocabulary: see 'learn the vocabulary'.)
+To 'mnemonic kind'.
+  Return a number, 1.
+
+To 'quadword register kind'.
+  Return a number, 2.
+
+To 'doubleword register kind'.
+  Return a number, 3.
+
+To 'word register kind'.
+  Return a number, 4.
+
+To 'byte register kind'.
+  Return a number, 5.
+
+To 'vector register kind'.
+  Return a number, 6.
+
+To 'refused register kind'.
+  Return a number, 7.
+
+To 'refused directive kind'.
+  Return a number, 8.
+
+To 'refused prefix kind'.
+  Return a number, 9.
+
+(--- Bytes and texts -------------------------------------------------------)
+
+(One byte onto the end of a buffer. Writing one past the end is what grows
+ a dynamic buffer, so this needs no scratch of its own.)
+To 'append the byte' with a number called 'the byte to append' and a buffer called output.
+  set byte {output's size add 1} of output to 'the byte to append'.
+
+(A space, a tab or a carriage return: the bytes read as space between
+ tokens, so a file with Windows line endings reads as one without.)
+To 'the byte is a space' with a number called character.
+  Return a boolean, character is ' ' or character is '\t' or character is '\r'.
+
+To 'the byte is a digit' with a number called character.
+  Return a boolean, character is greater than or equal to '0' and character is less than or equal to '9'.
+
+(Can this byte begin a NASM name? A name begins with a letter, an
+ underscore, a dot, as a local label does, or a question mark.)
+To 'the byte begins a name' with a number called character.
+  If character is greater than or equal to 'a' and character is less than or equal to 'z' then, Return a boolean, true.
+  If character is greater than or equal to 'A' and character is less than or equal to 'Z' then, Return a boolean, true.
+  Return a boolean, character is '_' or character is '.' or character is '?'.
+
+(Can this byte carry a name on after its first byte?)
+To 'the byte continues a name' with a number called character.
+  If 'the byte begins a name' with character then, Return a boolean, true.
+  If 'the byte is a digit' with character then, Return a boolean, true.
+  Return a boolean, character is '$' or character is '@' or character is '#' or character is '~'.
+
+(Bytes first to last of a buffer, as a text.)
+To 'the bytes as text' with a buffer called characters and a number called first and a number called last.
+  Create a buffer called piece.
+  For each position from first to last,
+    'append the byte' with {byte position of characters} and piece.
+  a text called 'piece as text' is "{piece}".
+  Return a text, 'piece as text'.
+
+To 'the text has the prefix' with a text called 'given text' and a text called prefix.
+  a buffer called characters is "{given text}".
+  a buffer called wanted is "{prefix}".
+  If wanted's size is greater than characters's size then, Return a boolean, false.
+  For each position from 1 to wanted's size,
+    if byte position of characters is not byte position of wanted then, Return a boolean, false..
+  Return a boolean, true.
+
+(The first byte of a text, or 0 for the empty text. Vox reads the bytes of
+ a buffer, not of a text, so this costs a buffer: the callers that look at
+ many bytes make one buffer and read them all from it.)
+To 'the first character of' of a text called 'given text'.
+  a buffer called characters is "{given text}".
+  If characters's size is 0 then, Return a number, 0.
+  Return a number, byte 1 of characters.
+
+(The last byte of a text, or 0 for the empty text.)
+To 'the last character of' of a text called 'given text'.
+  a buffer called characters is "{given text}".
+  If characters's size is 0 then, Return a number, 0.
+  Return a number, byte {characters's size} of characters.
+
+(Which quote a line is inside after this byte. A quote opens on one of
+ NASM's three quote marks, the single, the double and the back quote, and
+ closes on the same mark again.)
+To 'the quote open after the byte' with a number called character and a number called 'open quote'.
+  If 'open quote' is not 0 and character is 'open quote' then, Return a number, 0.
+  If 'open quote' is not 0 then, Return a number, 'open quote'.
+  If character is '"' or character is 'single quote mark' or character is '`' then, Return a number, character.
+  Return a number, 0.
+
+To 'the text is all digits' with a text called 'given text'.
+  a buffer called characters is "{given text}".
+  If characters's size is 0 then, Return a boolean, false.
+  For each position from 1 to characters's size,
+    if not 'the byte is a digit' with {byte position of characters} then, Return a boolean, false..
+  Return a boolean, true.
+
+(The decimal number a run of digits spells.)
+To 'the decimal value of' of a text called digits.
+  a buffer called characters is "{digits}".
+  a number called total is 0.
+  For each position from 1 to characters's size,
+    set total to {total multiply 10} add {{byte position of characters} subtract '0'}.
+  Return a number, total.
+
+(--- Files -----------------------------------------------------------------)
+
+(The whole of a file, into a buffer. A read hands back as much as the
+ system gives it at once, so this reads until a read comes back empty.
+ Answers false when the file cannot be opened.)
+To 'read the whole file' with a text called path and a buffer called content.
+  a boolean called 'it opened' is true.
+  open a file for reading called source at path.
+  On error set 'it opened' to false.
+  If 'it opened' is false then, Return a boolean, false.
+  Create a buffer called chunk.
+  Read from source into chunk.
+  While chunk's size is greater than 0,
+    append chunk to content,
+    Read from source into chunk.
+  Close source.
+  Return a boolean, true.
+
+(A buffer, written out as the whole of a file. Answers false when the file
+ cannot be opened for writing.)
+To 'write the file' with a text called path and a buffer called content.
+  a boolean called 'it opened' is true.
+  open a file for writing called destination at path.
+  On error set 'it opened' to false.
+  If 'it opened' is false then, Return a boolean, false.
+  Write content to destination.
+  Close destination.
+  Return a boolean, true.
+
+(A path without the slashes at its end, so "coreasm/" and "coreasm" name
+ the same directory. The root keeps its one slash.)
+To 'the path without a trailing slash' with a text called path.
+  a buffer called characters is "{path}".
+  a number called last is characters's size.
+  a boolean called 'a slash ends it' is true.
+  While 'a slash ends it' and last is greater than 1,
+    set 'a slash ends it' to false,
+    if byte last of characters is '/' then, set 'a slash ends it' to true, decrement last..
+  Return a text, 'the bytes as text' with characters and 1 and last.
+
+(The directory part of a path, without its last slash: "." for a bare file
+ name, and "/" for a file at the root.)
+To 'the directory of' of a text called path.
+  a buffer called characters is "{path}".
+  a number called 'last slash' is 0.
+  For each position from 1 to characters's size,
+    if byte position of characters is '/' then, set 'last slash' to position..
+  If 'last slash' is 0 then, Return a text, ".".
+  If 'last slash' is 1 then, Return a text, "/".
+  Return a text, 'the bytes as text' with characters and 1 and {'last slash' subtract 1}.
+
+(--- Lines -----------------------------------------------------------------)
+
+(The source cut into its lines, each without its comment, its carriage
+ return and the spaces at its end. A comment runs from a semicolon to the
+ end of the line, unless the semicolon is inside quotes. A line left empty
+ is dropped, and every line kept keeps its number, for the diagnostics.)
+To 'split into lines' with a buffer called content and a list called lines and a list called 'line numbers'.
+  Create a buffer called line.
+  a number called 'line number' is 1.
+  a number called 'open quote' is 0.
+  a boolean called 'inside a comment' is false.
+  a boolean called 'it ends the line' is false.
+  a number called character is 0.
+  For each position from 1 to content's size,
+    set character to byte position of content,
+    set 'it ends the line' to false,
+    if character is '\n' then, set 'it ends the line' to true.
+    if 'it ends the line' then, 'keep the line' with line and 'line number' and lines and 'line numbers', clear line, increment 'line number', set 'open quote' to 0, set 'inside a comment' to false.
+    if 'it ends the line' is false and 'inside a comment' is false and 'open quote' is 0 and character is ';' then, set 'inside a comment' to true.
+    if 'it ends the line' is false and 'inside a comment' is false then, 'append the byte' with character and line, set 'open quote' to 'the quote open after the byte' with character and 'open quote'..
+  'keep the line' with line and 'line number' and lines and 'line numbers'.
+
+(One line onto the list, unless nothing but spaces is left on it. Spaces
+ at its end are kept, since every reader of a line passes over them; a
+ copy without them would cost the memory of a second text.)
+To 'keep the line' with a buffer called line and a number called 'line number' and a list called lines and a list called 'line numbers'.
+  a number called position is 'the end of the spaces' with line and 1.
+  If position is greater than line's size then, Return.
+  append "{line}" to lines.
+  append 'line number' to 'line numbers'.
+
+(Does a raw line open with this word, standing alone? This is how the
+ preprocessor finds where a %macro or a %rep body ends without reading the
+ lines inside it. The word comes as a buffer, made once by the caller,
+ since every buffer a function makes is kept until the program ends.)
+To 'the word opens the line' with a buffer called wanted and a buffer called characters.
+  a number called start is 'the end of the spaces' with characters and 1.
+  a number called 'position after the word' is start add wanted's size.
+  If 'position after the word' subtract 1 is greater than characters's size then, Return a boolean, false.
+  For each position from 1 to wanted's size,
+    if byte {start add position subtract 1} of characters is not byte position of wanted then, Return a boolean, false..
+  If 'position after the word' is greater than characters's size then, Return a boolean, true.
+  Return a boolean, 'the byte is a space' with {byte 'position after the word' of characters}.
+
+(--- Tokens ----------------------------------------------------------------)
+
+(The tokens of a line, in order: names, numbers, quoted strings, operators
+ and punctuation, with each run of spaces kept as a single space, so that
+ the line can be written back out as it stood. A token that begins with a
+ percent sign is a preprocessor word, a macro parameter or a macro-local
+ label.)
+To 'the tokens of' of a text called line.
+  a buffer called characters is "{line}".
+  Create a buffer called 'token characters'.
+  Return a list, 'the tokens in the line' with characters and 'token characters'.
+
+(The same, for a line already in a buffer, with a buffer to read each
+ token into, so that a caller reading many lines makes the two buffers
+ once.)
+To 'the tokens in the line' with a buffer called characters and a buffer called 'token characters'.
+  a list called tokens is [].
+  a number called position is 1.
+  While position is less than or equal to characters's size,
+    clear 'token characters',
+    set position to 'read a token' with characters and position and 'token characters',
+    append {'the token as text' of 'token characters'} to tokens.
+  Return a list, tokens.
+
+(A token as a text. Most tokens are a space or a single mark of
+ punctuation, and a text written in the program costs nothing to hand
+ out, where a text made from a buffer is a new one that Vox keeps until
+ the program ends, so those are answered from the program's own.)
+To 'the token as text' of a buffer called 'token characters'.
+  If 'token characters''s size is not 1 then, Return a text, "{'token characters'}".
+  a number called character is byte 1 of 'token characters'.
+  If character is ' ' then, Return a text, " ".
+  If character is ',' then, Return a text, ",".
+  If character is '[' then, Return a text, "[".
+  If character is ']' then, Return a text, "]".
+  If character is '+' then, Return a text, "+".
+  If character is '-' then, Return a text, "-".
+  If character is '*' then, Return a text, "*".
+  If character is ':' then, Return a text, ":".
+  If character is '(' then, Return a text, "(".
+  If character is ')' then, Return a text, ")".
+  If 'the byte is a digit' with character then, Return a text, 'the digit as text' of character.
+  Return a text, "{'token characters'}".
+
+To 'the digit as text' of a number called digit.
+  If digit is '0' then, Return a text, "0".
+  If digit is '1' then, Return a text, "1".
+  If digit is '2' then, Return a text, "2".
+  If digit is '3' then, Return a text, "3".
+  If digit is '4' then, Return a text, "4".
+  If digit is '5' then, Return a text, "5".
+  If digit is '6' then, Return a text, "6".
+  If digit is '7' then, Return a text, "7".
+  If digit is '8' then, Return a text, "8".
+  Return a text, "9".
+
+(Read the one token that starts at this position into the token's
+ characters, and answer the position just after it.)
+To 'read a token' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  a number called character is byte start of characters.
+  If 'the byte is a space' with character then, 'append the byte' with ' ' and 'token characters', Return a number, 'the end of the spaces' with characters and start.
+  If character is '"' or character is 'single quote mark' or character is '`' then, Return a number, 'read a quoted string' with characters and start and 'token characters'.
+  If 'the byte begins a name' with character then, Return a number, 'read a name' with characters and start and 'token characters'.
+  If 'the byte is a digit' with character then, Return a number, 'read a number' with characters and start and 'token characters'.
+  If character is '%' then, Return a number, 'read a percent word' with characters and start and 'token characters'.
+  If character is '$' then, Return a number, 'read a dollar word' with characters and start and 'token characters'.
+  'append the byte' with character and 'token characters'.
+  a number called 'next character' is 0.
+  If start is less than characters's size then, set 'next character' to byte {start add 1} of characters.
+  If 'the two bytes make an operator' with character and 'next character' then, 'append the byte' with 'next character' and 'token characters', Return a number, start add 2.
+  Return a number, start add 1.
+
+(The position of the first byte at or after this one that is not a space.)
+To 'the end of the spaces' with a buffer called characters and a number called start.
+  a number called position is start.
+  a boolean called 'still on a space' is true.
+  While 'still on a space' and position is less than or equal to characters's size,
+    set 'still on a space' to 'the byte is a space' with {byte position of characters},
+    if 'still on a space' then, increment position..
+  Return a number, position.
+
+(A name runs on over every byte a name may carry.)
+To 'read a name' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  a number called position is start.
+  a boolean called 'still on the name' is true.
+  While 'still on the name' and position is less than or equal to characters's size,
+    a number called character is byte position of characters,
+    set 'still on the name' to 'the byte continues a name' with character,
+    if 'still on the name' then, 'append the byte' with character and 'token characters', increment position..
+  Return a number, position.
+
+(A number runs on over letters, digits, underscores and points, which
+ covers hexadecimal digits, a radix prefix and a decimal point. A sign is
+ part of it only straight after the e of a floating-point exponent, in a
+ number that already has its point.)
+To 'read a number' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  a number called position is start.
+  a number called previous is 0.
+  a boolean called 'it has a point' is false.
+  a boolean called 'still on the number' is true.
+  While 'still on the number' and position is less than or equal to characters's size,
+    a number called character is byte position of characters,
+    set 'still on the number' to 'the byte continues a number' with character and previous and 'it has a point',
+    if character is '.' then, set 'it has a point' to true.
+    if 'still on the number' then, 'append the byte' with character and 'token characters', set previous to character, increment position..
+  Return a number, position.
+
+To 'the byte continues a number' with a number called character and a number called previous and a boolean called 'it has a point'.
+  If character is '+' or character is '-' then, Return a boolean, 'it has a point' and previous is 'e' or 'it has a point' and previous is 'E'.
+  If 'the byte is a digit' with character then, Return a boolean, true.
+  If character is '_' or character is '.' then, Return a boolean, true.
+  If character is greater than or equal to 'a' and character is less than or equal to 'z' then, Return a boolean, true.
+  Return a boolean, character is greater than or equal to 'A' and character is less than or equal to 'Z'.
+
+(A quoted string runs to the same quote mark again. Only a backquoted
+ string has escapes, where a backslash takes the next byte with it.)
+To 'read a quoted string' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  a number called 'opening quote' is byte start of characters.
+  'append the byte' with 'opening quote' and 'token characters'.
+  a number called position is start add 1.
+  a boolean called 'still inside' is true.
+  While 'still inside' and position is less than or equal to characters's size,
+    a number called character is byte position of characters,
+    'append the byte' with character and 'token characters',
+    increment position,
+    if character is 'opening quote' then, set 'still inside' to false.
+    if character is '\\' and 'opening quote' is '`' and position is less than or equal to characters's size then, 'append the byte' with {byte position of characters} and 'token characters', increment position..
+  Return a number, position.
+
+(A percent sign starts a preprocessor word such as %define, a macro
+ parameter such as %1 or %0, a macro-local label such as %%skip, or one of
+ the NASM forms vas refuses: %+, %$name and %{1}. On its own it is the
+ modulo operator.)
+To 'read a percent word' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  'append the byte' with '%' and 'token characters'.
+  If start is equal to characters's size then, Return a number, start add 1.
+  a number called 'next character' is byte {start add 1} of characters.
+  If 'next character' is '%' then, 'append the byte' with '%' and 'token characters', Return a number, 'read a name' with characters and {start add 2} and 'token characters'.
+  If 'the byte continues a name' with 'next character' then, Return a number, 'read a name' with characters and {start add 1} and 'token characters'.
+  If 'next character' is '+' or 'next character' is '{' then, 'append the byte' with 'next character' and 'token characters', Return a number, start add 2.
+  Return a number, start add 1.
+
+(A dollar sign on its own is the address of the current statement, and
+ two of them the start of its section. Followed by a name, it is that name
+ marked as not being a keyword, as NASM writes it.)
+To 'read a dollar word' with a buffer called characters and a number called start and a buffer called 'token characters'.
+  'append the byte' with '$' and 'token characters'.
+  If start is equal to characters's size then, Return a number, start add 1.
+  a number called 'next character' is byte {start add 1} of characters.
+  If 'next character' is '$' then, 'append the byte' with '$' and 'token characters', Return a number, start add 2.
+  If 'the byte continues a name' with 'next character' then, Return a number, 'read a name' with characters and {start add 1} and 'token characters'.
+  Return a number, start add 1.
+
+(NASM's operators of two characters.)
+To 'the two bytes make an operator' with a number called character and a number called 'next character'.
+  If character is '<' then, Return a boolean, 'next character' is '<' or 'next character' is '=' or 'next character' is '>'.
+  If character is '>' then, Return a boolean, 'next character' is '>' or 'next character' is '='.
+  If character is '=' or character is '!' then, Return a boolean, 'next character' is '='.
+  If character is '/' or character is '&' or character is '|' or character is '^' then, Return a boolean, 'next character' is character.
+  Return a boolean, false.
+
+(The token at a position, or the empty text past either end.)
+To 'the token at the position' with a list called tokens and a number called position.
+  If position is less than 1 or position is greater than tokens's length then, Return a text, "".
+  Return a text, element position of tokens.
+
+(The position of the first token at or after this one that is not a run
+ of spaces, or one past the end when there is none.)
+To 'the position of the next word' with a list called tokens and a number called start.
+  a number called position is start.
+  a boolean called 'still on a space' is true.
+  While 'still on a space' and position is less than or equal to tokens's length,
+    a text called token is element position of tokens,
+    set 'still on a space' to false,
+    if token is " " then, set 'still on a space' to true, increment position..
+  Return a number, position.
+
+(The first token that is not a run of spaces, or the empty text.)
+To 'the first word of' of a list called tokens.
+  Return a text, 'the token at the position' with tokens and {'the position of the next word' with tokens and 1}.
+
+(Tokens first to last written back out, without the spaces at either end.
+ A single token is handed back as it is, as in 'the words joined by
+ spaces'.)
+To 'the tokens written back out' with a list called tokens and a number called first and a number called last.
+  a number called 'from position' is 'the position of the next word' with tokens and first.
+  a number called 'to position' is 'the position of the last word' with tokens and 'from position' and last.
+  If 'from position' is 'to position' then, Return a text, element 'from position' of tokens.
+  Create a buffer called written.
+  'write the tokens back out' with tokens and 'from position' and 'to position' and written.
+  a text called 'written text' is "{written}".
+  Return a text, 'written text'.
+
+(The same, onto the end of a buffer the caller has.)
+To 'write the tokens back out' with a list called tokens and a number called first and a number called last and a buffer called written.
+  a number called 'from position' is 'the position of the next word' with tokens and first.
+  a number called 'to position' is 'the position of the last word' with tokens and 'from position' and last.
+  For each position from 'from position' to 'to position',
+    a text called token is element position of tokens,
+    append "{token}" to written.
+
+(The position of the last token from first to last that is not a run of
+ spaces, or one before first when there is none.)
+To 'the position of the last word' with a list called tokens and a number called first and a number called last.
+  a number called position is last.
+  a boolean called 'still on a space' is true.
+  While 'still on a space' and position is greater than or equal to first,
+    a text called token is element position of tokens,
+    set 'still on a space' to false,
+    if token is " " then, set 'still on a space' to true, decrement position..
+  Return a number, position.
+
+(The tokens first to last that are not runs of spaces: the words a
+ statement is parsed from. A word is appended straight from the list, as
+ in 'append every token'.)
+To 'the words in the tokens' with a list called tokens and a number called first and a number called last.
+  a list called words is [].
+  For each position from first to last,
+    a text called token is element position of tokens,
+    if token is not " " then, append {element position of tokens} to words..
+  Return a list, words.
+
+(Words first to last joined with a space between each. One word on its
+ own is already its text, so it is handed back as it is rather than
+ copied: most operands are one word, and every copy is kept until the
+ program ends.)
+To 'the words joined by spaces' with a list called words and a number called first and a number called last.
+  If first is last then, Return a text, element first of words.
+  Create a buffer called written.
+  For each position from first to last,
+    a text called word is element position of words,
+    if position is greater than first then, append " " to written.
+    append "{word}" to written.
+  a text called joined is "{written}".
+  Return a text, joined.
+
+(Words first to last joined with nothing between them.)
+To 'the words joined with nothing between' with a list called words and a number called first and a number called last.
+  If first is last then, Return a text, element first of words.
+  Create a buffer called written.
+  For each position from first to last,
+    a text called word is element position of words,
+    append "{word}" to written.
+  a text called joined is "{written}".
+  Return a text, joined.
+
+(Where a text stands in a list, counting from 1, or 0 when it is not
+ there.)
+To 'where the text stands' with a list called items and a text called wanted.
+  For each position from 1 to items's length,
+    a text called item is element position of items,
+    if item is wanted then, Return a number, position..
+  Return a number, 0.
+
+(The names in a text that separates them with commas, as a list.)
+To 'the names separated by commas' of a text called names.
+  a list called found is [].
+  a buffer called characters is "{names}".
+  Create a buffer called 'the name so far'.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if character is ',' then, append "{the name so far}" to found, clear 'the name so far'.
+    if character is not ',' then, 'append the byte' with character and 'the name so far'..
+  If characters's size is greater than 0 then, append "{the name so far}" to found.
+  Return a list, found.
+
+(The pieces of a text between its runs of spaces.)
+To 'the pieces between spaces of' of a text called 'given text'.
+  a list called pieces is [].
+  a buffer called characters is "{given text} ".
+  Create a buffer called piece.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    a boolean called 'it is a space' is 'the byte is a space' with character,
+    if 'it is a space' is false then, 'append the byte' with character and piece.
+    if 'it is a space' and piece's size is greater than 0 then, append "{piece}" to pieces, clear piece..
+  Return a list, pieces.
+
+(Every token of one list onto the end of another. Each element is
+ appended as it is read, never through a named text, because a text read
+ out of a list parameter into a variable is appended with the wrong type
+ tag: a Vox bug, reported, not yet numbered.)
+To 'append every token' with a list called source and a list called destination.
+  For each position from 1 to source's length,
+    append {element position of source} to destination.
+
+(--- The preprocessor ------------------------------------------------------)
+
+('what vas knows' is a map of everything the front end knows, each entry
+ keyed by what it is about, since a library has no variables of its own
+ to keep it in. A key that was never set reads as false, 0 or the empty
+ text, so a name nothing has marked reads as unmarked:
+
+   "errors"                     how many messages have been given
+   "a shared build was refused" true once the source is known to be a
+                                shared build's, which ends the reading
+   "coreasm directory"          where coreasm is; "coreasm parent" is the
+                                directory that holds it
+   "includes", "depth"          how deeply %include and macro expansion
+                                are nested
+   "expansions so far", "current expansion"
+                                how many macro expansions there have been,
+                                and the number of the one running, 0
+                                outside every macro
+   "define NAME"                what kind of single-line macro the name
+                                is, a number: 'definition without
+                                parameters', 'definition with parameters',
+                                or 0 for none, which is also what %undef
+                                leaves; "definition NAME" is its body and
+                                "parameters NAME" its parameter names,
+                                separated by commas
+   "defined names"              a list of every name a single-line macro
+                                has been given, each once
+   "macro NAME"                 true for a multi-line macro, whose body is
+                                in the macros map
+   "section", "scope"           the section statements go into, and the
+                                label a local label belongs to
+   "label NAME"                 true once a label or a constant is defined
+   "constant known NAME"        true when an equ constant's value is known,
+                                and "constant NAME" is that value
+   "global NAME", "default relative", "stack is not executable"
+                                true for what the global, default and
+                                section directives said
+   "word WORD", "register number NAME"
+                                the fixed vocabulary: see 'learn the
+                                vocabulary'
+   "only the text is wanted"    true when the caller wants only each
+                                statement's text: see 'keep the record'
+
+ The macros map holds each multi-line macro: "body NAME" and "lines NAME",
+ its lines and their numbers, "file NAME", where it was written, and
+ "minimum NAME" and "maximum NAME", how many arguments it takes, the
+ maximum being 'no limit' when there is none.)
+
+(The preprocessor's loop over one run of lines: a file, a macro's body,
+ or the body of a %rep. A line that opens a %macro or a %rep takes its
+ whole body with it, so the next line read is the one after the body.
+ Every condition opened in the run must be closed in it. Once a shared
+ build is refused, nothing more is read, in this run or any around it: the
+ rest of a shared build's source could only cost memory, and a condition
+ left open there was never going to be closed.)
+To 'process the lines' with a list called lines and a list called 'line numbers' and a text called 'source name' and a list called 'macro arguments' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a list called conditions is [0].
+  (Every buffer a function makes is kept until the program ends, so the
+   buffers each line is read through are made once for the whole run)
+  Create a buffer called 'line characters'.
+  Create a buffer called 'token characters'.
+  a number called 'line position' is 1.
+  a boolean called 'a shared build was refused' is 'what vas knows''s "a shared build was refused".
+  While 'line position' is less than or equal to lines's length and not 'a shared build was refused',
+    set 'line position' to 'process the line' with 'line position' and lines and 'line numbers' and 'source name' and 'macro arguments' and conditions and 'what vas knows' and macros and statements and diagnostics and 'line characters' and 'token characters',
+    set 'a shared build was refused' to 'what vas knows''s "a shared build was refused".
+  If 'a shared build was refused' then, Return.
+  a number called 'open conditions' is element 1 of conditions.
+  a number called 'last line number' is 0.
+  If 'line numbers''s length is greater than 0 then, set 'last line number' to element {'line numbers''s length} of 'line numbers'.
+  If 'open conditions' is greater than 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'last line number' and "a condition opened in this file or macro is never closed with %endif".
+
+(One line through the preprocessor. Inside a macro its parameters are put
+ in first. Conditions are followed even where lines are being skipped, so
+ that their nesting is kept; everything else in a skipped line is left
+ alone. The line is read through the two buffers given, which this
+ leaves holding it and its last token. Answers the position of the next
+ line to read.)
+To 'process the line' with a number called 'line position' and a list called lines and a list called 'line numbers' and a text called 'source name' and a list called 'macro arguments' and a list called conditions and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics and a buffer called 'line characters' and a buffer called 'token characters'.
+  a text called line is element 'line position' of lines.
+  a number called 'line number' is element 'line position' of 'line numbers'.
+  a number called 'expansion number' is 'what vas knows''s "current expansion".
+  If 'expansion number' is greater than 0 then, set line to 'the line with its parameters put in' with line and 'macro arguments' and 'expansion number'.
+  clear 'line characters'.
+  append "{line}" to 'line characters'.
+  a list called tokens is 'the tokens in the line' with 'line characters' and 'token characters'.
+  a text called directive is 'the first word of' of tokens.
+  If directive is "%if" or directive is "%ifdef" or directive is "%ifndef" then,
+    'open the condition' with tokens and directive and conditions and 'source name' and 'line number' and 'what vas knows' and diagnostics,
+    Return a number, 'line position' add 1.
+  If directive is "%else" or directive is "%endif" then,
+    'carry on the condition' with directive and conditions and 'source name' and 'line number' and 'what vas knows' and diagnostics,
+    Return a number, 'line position' add 1.
+  If 'the lines are being skipped' with conditions then, Return a number, 'line position' add 1.
+  If directive is "%macro" then, Return a number, 'define the macro' with 'line position' and lines and 'line numbers' and tokens and 'source name' and 'what vas knows' and macros and diagnostics.
+  If directive is "%rep" then, Return a number, 'repeat the lines' with 'line position' and lines and 'line numbers' and tokens and 'source name' and 'macro arguments' and 'what vas knows' and macros and statements and diagnostics.
+  If 'the line opens with a directive' with 'line characters' then,
+    'obey the directive' with tokens and directive and 'source name' and 'line number' and 'macro arguments' and 'what vas knows' and macros and statements and diagnostics,
+    Return a number, 'line position' add 1.
+  'assemble the line' with tokens and 'source name' and 'line number' and 'what vas knows' and macros and statements and diagnostics.
+  Return a number, 'line position' add 1.
+
+(Does the line's first word begin with a percent sign and a lower-case
+ letter? A preprocessor directive does, which leaves %1, %% and the other
+ percent forms to the statement that holds them.)
+To 'the line opens with a directive' with a buffer called characters.
+  a number called start is 'the end of the spaces' with characters and 1.
+  If start is greater than or equal to characters's size then, Return a boolean, false.
+  If byte start of characters is not '%' then, Return a boolean, false.
+  a number called 'second character' is byte {start add 1} of characters.
+  Return a boolean, 'second character' is greater than or equal to 'a' and 'second character' is less than or equal to 'z'.
+
+(The conditions open in a run of lines are a stack held in a list: the
+ first element is how many are open, and each one after it is a frame,
+ keeping its lines, waiting for its else while they are skipped, or
+ finished keeping once there is nothing left in it to keep.)
+
+(Is any condition around this line keeping it out?)
+To 'the lines are being skipped' with a list called conditions.
+  a number called 'open conditions' is element 1 of conditions.
+  For each position from 2 to {'open conditions' add 1},
+    if element position of conditions is not 'keeping its lines' then, Return a boolean, true..
+  Return a boolean, false.
+
+(Open a condition. One opened where lines are already being skipped can
+ never be taken, whatever it says.)
+To 'put a condition on the stack' with a list called conditions and a boolean called 'it holds'.
+  a number called frame is 'waiting for its else'.
+  If 'it holds' then, set frame to 'keeping its lines'.
+  If 'the lines are being skipped' with conditions then, set frame to 'finished keeping'.
+  a number called 'open conditions' is element 1 of conditions.
+  Set 'open conditions' to 'open conditions' add 1.
+  Set element 1 of conditions to 'open conditions'.
+  If conditions's length is less than {'open conditions' add 1} then, append frame to conditions.
+  Otherwise, Set element {'open conditions' add 1} of conditions to frame.
+
+(An %else keeps the lines a false condition skipped, and skips the rest of
+ a true one.)
+To 'take the other branch' with a list called conditions.
+  a number called 'open conditions' is element 1 of conditions.
+  a number called frame is element {'open conditions' add 1} of conditions.
+  If frame is 'waiting for its else' then, Set element {'open conditions' add 1} of conditions to 'keeping its lines'.
+  If frame is 'keeping its lines' then, Set element {'open conditions' add 1} of conditions to 'finished keeping'.
+
+To 'close a condition' with a list called conditions.
+  a number called 'open conditions' is element 1 of conditions.
+  Set element 1 of conditions to 'open conditions' subtract 1.
+
+(Open a condition from %if, %ifdef or %ifndef. %ifdef asks whether a name
+ has been given a single-line macro, and %if whether its expression comes
+ out true. Neither is worked out where lines are already being skipped.)
+To 'open the condition' with a list called tokens and a text called directive and a list called conditions and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  If 'the lines are being skipped' with conditions then, 'put a condition on the stack' with conditions and false, Return.
+  a boolean called 'it holds' is false.
+  a boolean called 'it is defined' is false.
+  If directive is "%if" then, set 'it holds' to 'the condition holds' with tokens and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  If directive is not "%if" then, set 'it is defined' to 'the name after the directive is defined' with tokens and directive and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  If directive is "%ifdef" then, set 'it holds' to 'it is defined'.
+  If directive is "%ifndef" and 'it is defined' is false then, set 'it holds' to true.
+  'put a condition on the stack' with conditions and 'it holds'.
+
+To 'carry on the condition' with a text called directive and a list called conditions and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a number called 'open conditions' is element 1 of conditions.
+  If 'open conditions' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "{directive} has no %if before it", Return.
+  If directive is "%else" then, 'take the other branch' with conditions.
+  If directive is "%endif" then, 'close a condition' with conditions.
+
+(Has the name after %ifdef or %ifndef been given a single-line macro?)
+To 'the name after the directive is defined' with a list called tokens and a text called directive and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a list called words is 'the words in the tokens' with tokens and 1 and tokens's length.
+  If words's length is not 2 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "{directive} takes one name", Return a boolean, false.
+  a text called 'defined name' is element 2 of words.
+  a number called kind is 'what vas knows''s "define {defined name}".
+  Return a boolean, kind is greater than 0.
+
+(Does the expression of an %if come out true? Its single-line macros are
+ expanded first. The corpus compares with > alone, so that is the one
+ comparison vas takes; the others are refused by name.)
+To 'the condition holds' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a list called expanded is 'the tokens with definitions expanded' with tokens and 'what vas knows' and 0 and 'source name' and 'line number' and diagnostics.
+  a list called words is 'the words in the tokens' with expanded and 1 and expanded's length.
+  If words's length is less than 2 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%if needs an expression", Return a boolean, false.
+  a map called reader is 'a reader of the words' with 2 and words's length.
+  a number called left is 'the bitwise or level' with words and 'what vas knows' and reader.
+  a number called right is 0.
+  a boolean called 'it compares' is false.
+  If 'the next word matches' with words and reader and ">" then, 'step past the word' with reader, set 'it compares' to true, set right to 'the bitwise or level' with words and 'what vas knows' and reader.
+  'finish the expression' with words and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and problem, Return a boolean, false.
+  a boolean called 'it is constant' is reader's "constant".
+  If 'it is constant' is false then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the expression of an %if must be known before anything is assembled", Return a boolean, false.
+  If 'it compares' then, Return a boolean, left is greater than right.
+  Return a boolean, left is not 0.
+
+(Where the body that a line opens ends: the line holding the closing word
+ that matches it, counting any of the same pair nested inside, or 0 when
+ it is never closed.)
+To 'the matching end' with a list called lines and a number called start and a text called opening and a text called closing.
+  a buffer called 'opening word' is "{opening}".
+  a buffer called 'closing word' is "{closing}".
+  a number called nesting is 0.
+  Create a buffer called characters.
+  For each position from {start add 1} to lines's length,
+    copy "{element position of lines}" to characters,
+    if 'the word opens the line' with 'opening word' and characters then, increment nesting.
+    if 'the word opens the line' with 'closing word' and characters then, decrement nesting.
+    if nesting is -1 then, Return a number, position..
+  Return a number, 0.
+
+(A %macro definition: its name, how many arguments it takes, and its body,
+ every line up to the matching %endmacro, kept as written so that it can
+ be read again each time the macro is expanded. The corpus gives a macro
+ a fixed count, or a least count and any number more, written 1-*; the
+ other forms are refused. A macro defined again replaces the first, as
+ NASM's does. Answers the line after the %endmacro.)
+To 'define the macro' with a number called 'line position' and a list called lines and a list called 'line numbers' and a list called tokens and a text called 'source name' and a map called 'what vas knows' and a map called macros and a buffer called diagnostics.
+  a number called 'line number' is element 'line position' of 'line numbers'.
+  a number called 'end position' is 'the matching end' with lines and 'line position' and "%macro" and "%endmacro".
+  If 'end position' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%macro is never ended with %endmacro", Return a number, lines's length add 1.
+  a list called words is 'the words in the tokens' with tokens and 1 and tokens's length.
+  If words's length is less than 'words in a macro line with a fixed count' then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%macro needs a name and a count of arguments", Return a number, 'end position' add 1.
+  a text called 'macro name' is element 2 of words.
+  a text called 'least count' is element 3 of words.
+  a text called 'whole count' is 'the words joined with nothing between' with words and 3 and words's length.
+  a boolean called 'it is open ended' is false.
+  If words's length is 'words in a macro line with an open count' and element 4 of words is "-" and element 5 of words is "*" then, set 'it is open ended' to true.
+  a boolean called 'the count is readable' is false.
+  If words's length is 'words in a macro line with a fixed count' or 'it is open ended' then, set 'the count is readable' to 'the text is all digits' with 'least count'.
+  a text called refusal is 'the refusal message of' of "the macro argument count {whole count}".
+  If 'the count is readable' is false then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and refusal, Return a number, 'end position' add 1.
+  a number called minimum is 'the decimal value of' of 'least count'.
+  a number called maximum is minimum.
+  If 'it is open ended' then, set maximum to 'no limit'.
+  a list called body is [].
+  a list called 'body line numbers' is [].
+  For each position from {'line position' add 1} to {'end position' subtract 1},
+    append {element position of lines} to body,
+    append {element position of 'line numbers'} to 'body line numbers'.
+  Set macros's "body {macro name}" to body.
+  Set macros's "lines {macro name}" to 'body line numbers'.
+  Set macros's "file {macro name}" to 'source name'.
+  Set macros's "minimum {macro name}" to minimum.
+  Set macros's "maximum {macro name}" to maximum.
+  Set 'what vas knows''s "macro {macro name}" to true.
+  Return a number, 'end position' add 1.
+
+(A %rep: the lines up to the matching %endrep, run through the
+ preprocessor as many times as the count says. Inside a macro they see
+ its arguments, and a %rotate among them turns those arguments for the
+ next time round. Answers the line after the %endrep.)
+To 'repeat the lines' with a number called 'line position' and a list called lines and a list called 'line numbers' and a list called tokens and a text called 'source name' and a list called 'macro arguments' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a number called 'line number' is element 'line position' of 'line numbers'.
+  a number called 'end position' is 'the matching end' with lines and 'line position' and "%rep" and "%endrep".
+  If 'end position' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%rep is never ended with %endrep", Return a number, lines's length add 1.
+  a number called repetitions is 'the count after the directive' with tokens and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  a list called body is [].
+  a list called 'body line numbers' is [].
+  For each position from {'line position' add 1} to {'end position' subtract 1},
+    append {element position of lines} to body,
+    append {element position of 'line numbers'} to 'body line numbers'.
+  Repeat repetitions times, 'process the lines' with body and 'body line numbers' and 'source name' and 'macro arguments' and 'what vas knows' and macros and statements and diagnostics.
+  Return a number, 'end position' add 1.
+
+(The count after %rep or %rotate: an expression that must be known before
+ anything is assembled. Answers 0 when it is not.)
+To 'the count after the directive' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a list called expanded is 'the tokens with definitions expanded' with tokens and 'what vas knows' and 0 and 'source name' and 'line number' and diagnostics.
+  a list called words is 'the words in the tokens' with expanded and 1 and expanded's length.
+  a text called directive is element 1 of words.
+  If words's length is less than 2 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "{directive} needs a count", Return a number, 0.
+  a map called reader is 'a reader of the words' with 'the position after the leading word' and words's length.
+  a number called 'the count' is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and problem, Return a number, 0.
+  a boolean called 'it is constant' is reader's "constant".
+  If 'it is constant' is false then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the count of {directive} must be known before anything is assembled", Return a number, 0.
+  Return a number, 'the count'.
+
+(The preprocessor directives that take a single line. Any not named here
+ is outside the subset.)
+To 'obey the directive' with a list called tokens and a text called directive and a text called 'source name' and a number called 'line number' and a list called 'macro arguments' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  If directive is "%define" then, 'define the single-line macro' with tokens and 'source name' and 'line number' and 'what vas knows' and diagnostics, Return.
+  If directive is "%undef" then, 'undefine the single-line macro' with tokens and 'source name' and 'line number' and 'what vas knows' and diagnostics, Return.
+  If directive is "%include" then, 'include the named file' with tokens and 'source name' and 'line number' and 'what vas knows' and macros and statements and diagnostics, Return.
+  If directive is "%rotate" then, 'rotate the macro arguments' with tokens and 'macro arguments' and 'source name' and 'line number' and 'what vas knows' and diagnostics, Return.
+  If directive is "%endmacro" or directive is "%endrep" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "{directive} has nothing open before it to end", Return.
+  a text called refusal is 'the refusal message of' of "the preprocessor directive {directive}".
+  complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and refusal.
+
+(A %define: a name; the names of its parameters in parentheses straight
+ after it, if it takes any; and a body, which is kept as written and
+ expanded only where the name is used.)
+To 'define the single-line macro' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a number called 'directive position' is 'the position of the next word' with tokens and 1.
+  a number called 'name position' is 'the position of the next word' with tokens and {'directive position' add 1}.
+  If 'name position' is greater than tokens's length then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%define needs a name", Return.
+  a text called 'defined name' is element 'name position' of tokens.
+  a number called 'opening position' is 'name position' add 1.
+  a text called 'after the name' is 'the token at the position' with tokens and 'opening position'.
+  a number called kind is 'definition without parameters'.
+  a number called 'body position' is 'opening position'.
+  a text called 'parameter names' is "".
+  If 'after the name' is "(" then, set kind to 'definition with parameters'.
+  a number called 'closing position' is 0.
+  If kind is 'definition with parameters' then, set 'closing position' to 'the position of the closing parenthesis' with tokens and 'opening position'.
+  If kind is 'definition with parameters' and 'closing position' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the parameters of {defined name} are never closed with a parenthesis", Return.
+  If kind is 'definition with parameters' then, set 'parameter names' to 'the parameter names' with tokens and 'opening position' and 'closing position', set 'body position' to 'closing position' add 1.
+  'note the defined name' with 'defined name' and 'what vas knows'.
+  Set 'what vas knows''s "define {defined name}" to kind.
+  Set 'what vas knows''s "definition {defined name}" to 'the tokens written back out' with tokens and 'body position' and tokens's length.
+  Set 'what vas knows''s "parameters {defined name}" to 'parameter names'.
+
+(A name onto the list of names single-line macros have been given, once
+ however often it is defined: see 'the tokens with definitions expanded'.)
+To 'note the defined name' with a text called 'defined name' and a map called 'what vas knows'.
+  a list called 'defined names' is 'what vas knows''s "defined names".
+  If {'where the text stands' with 'defined names' and 'defined name'} is greater than 0 then, Return.
+  append 'defined name' to 'defined names'.
+  Set 'what vas knows''s "defined names" to 'defined names'.
+
+(The parameter names between a definition's parentheses, run together
+ with their commas.)
+To 'the parameter names' with a list called tokens and a number called opening and a number called closing.
+  a list called words is 'the words in the tokens' with tokens and {opening add 1} and {closing subtract 1}.
+  Return a text, 'the words joined with nothing between' with words and 1 and words's length.
+
+(Where the parenthesis that closes this opening one is, counting any
+ nested inside it, or 0 when there is none.)
+To 'the position of the closing parenthesis' with a list called tokens and a number called opening.
+  a number called nesting is 0.
+  For each position from {opening add 1} to tokens's length,
+    a text called token is element position of tokens,
+    if token is ")" and nesting is 0 then, Return a number, position.
+    if token is ")" then, decrement nesting.
+    if token is "(" then, increment nesting..
+  Return a number, 0.
+
+(An %undef: the name has no single-line macro from here on. A map has no
+ way to remove an entry, so the name is marked as not defined.)
+To 'undefine the single-line macro' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a list called words is 'the words in the tokens' with tokens and 1 and tokens's length.
+  If words's length is not 2 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%undef takes one name", Return.
+  a text called 'defined name' is element 2 of words.
+  Set 'what vas knows''s "define {defined name}" to 0.
+
+(An %include: one file name in quotes.)
+To 'include the named file' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a list called words is 'the words in the tokens' with tokens and 1 and tokens's length.
+  If words's length is not 2 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%include takes one file name in quotes", Return.
+  a text called quoted is element 2 of words.
+  a buffer called characters is "{quoted}".
+  a number called 'opening quote' is byte 1 of characters.
+  a number called 'closing quote' is byte {characters's size} of characters.
+  a boolean called 'it is quoted' is false.
+  If 'opening quote' is '"' or 'opening quote' is 'single quote mark' then, set 'it is quoted' to true.
+  If characters's size is less than 'fewest bytes in a quoted name' or 'closing quote' is not 'opening quote' then, set 'it is quoted' to false.
+  If 'it is quoted' is false then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%include takes one file name in quotes", Return.
+  a text called 'file name' is 'the bytes as text' with characters and 2 and {characters's size subtract 1}.
+  a text called path is 'the included path' with 'file name' and 'source name' and 'what vas knows'.
+  If path is "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "cannot find the included file {file name}", Return.
+  'include the file' with path and 'source name' and 'line number' and 'what vas knows' and macros and statements and diagnostics.
+
+(Where an %include finds its file: beside the file that includes it first,
+ then in the directory that holds the coreasm directory, since the
+ compiler names its includes coreasm/<arch>/<file>, and last in the
+ coreasm directory itself. A path from the root is taken as it is.
+ Answers the empty text when the file is in none of them.)
+To 'the included path' with a text called 'file name' and a text called 'includer name' and a map called 'what vas knows'.
+  a number called 'first character' is 'the first character of' of 'file name'.
+  If 'first character' is '/' and 'file name' is available then, Return a text, 'file name'.
+  If 'first character' is '/' then, Return a text, "".
+  a text called 'includer directory' is 'the directory of' of 'includer name'.
+  a text called 'coreasm parent' is 'what vas knows''s "coreasm parent".
+  a text called 'coreasm directory' is 'what vas knows''s "coreasm directory".
+  a text called candidate is "".
+  Set candidate to "{includer directory}/{file name}".
+  If candidate is available then, Return a text, candidate.
+  Set candidate to "{coreasm parent}/{file name}".
+  If candidate is available then, Return a text, candidate.
+  Set candidate to "{coreasm directory}/{file name}".
+  If candidate is available then, Return a text, candidate.
+  Return a text, "".
+
+(Read a file and run its lines through the preprocessor, as %include does
+ and as the source file itself is read. Includes nest no deeper than
+ 'deepest nesting', which stops a file that includes itself. A file read from inside a macro
+ is not part of that macro.)
+To 'include the file' with a text called path and a text called 'includer name' and a number called 'includer line' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a number called includes is 'what vas knows''s "includes".
+  If includes is 'deepest nesting' then, complain with diagnostics and 'what vas knows' and 'includer name' and 'includer line' and "{path} is included more than {includes} levels deep", Return.
+  Create a buffer called content.
+  If not 'read the whole file' with path and content then, complain with diagnostics and 'what vas knows' and 'includer name' and 'includer line' and "cannot read the file {path}", Return.
+  a list called lines is [].
+  a list called 'line numbers' is [].
+  'split into lines' with content and lines and 'line numbers'.
+  a list called 'no macro arguments' is [].
+  a number called 'outer expansion' is 'what vas knows''s "current expansion".
+  Set 'what vas knows''s "includes" to includes add 1.
+  Set 'what vas knows''s "current expansion" to 0.
+  'process the lines' with lines and 'line numbers' and path and 'no macro arguments' and 'what vas knows' and macros and statements and diagnostics.
+  Set 'what vas knows''s "current expansion" to 'outer expansion'.
+  Set 'what vas knows''s "includes" to includes.
+
+(A %rotate: the macro's arguments turned to the left by the count, so that
+ %1 names what %2 named, and the first goes round to the end. A negative
+ count turns them to the right.)
+To 'rotate the macro arguments' with a list called tokens and a list called 'macro arguments' and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a number called 'expansion number' is 'what vas knows''s "current expansion".
+  If 'expansion number' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "%rotate is used outside a macro", Return.
+  a number called turns is 'the count after the directive' with tokens and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  a number called 'argument count' is 'macro arguments''s length.
+  If 'argument count' is 0 then, Return.
+  a number called shift is turns modulo 'argument count'.
+  If shift is less than 0 then, set shift to shift add 'argument count'.
+  a list called rotated is [].
+  For each 'argument position' from 1 to 'argument count',
+    a number called 'source position' is {{'argument position' add shift subtract 1} modulo 'argument count'} add 1,
+    append {element 'source position' of 'macro arguments'} to rotated.
+  For each 'argument position' from 1 to 'argument count',
+    Set element 'argument position' of 'macro arguments' to element 'argument position' of rotated.
+
+(A line of a macro's body with its parameters put in, before it is cut
+ into tokens: %1 and on become the arguments as they stand after any
+ %rotate, %0 becomes how many there are, and %%name becomes a label of
+ this expansion's own, ..@<number>.name, the form NASM gives it. Nothing
+ inside quotes is touched, as NASM touches nothing there. The line is read
+ a byte at a time in one buffer, and one with no percent sign in it comes
+ back as it was.)
+To 'the line with its parameters put in' with a text called line and a list called 'macro arguments' and a number called 'expansion number'.
+  a buffer called characters is "{line}".
+  a boolean called 'it holds a percent sign' is false.
+  For each position from 1 to characters's size,
+    if byte position of characters is '%' then, set 'it holds a percent sign' to true..
+  If 'it holds a percent sign' is false then, Return a text, line.
+  Create a buffer called written.
+  a number called 'open quote' is 0.
+  a number called position is 1.
+  While position is less than or equal to characters's size,
+    a number called character is byte position of characters,
+    set position to position add 1,
+    if 'open quote' is 0 and character is '%' then, set position to 'put in the parameter' with characters and position and written and 'macro arguments' and 'expansion number', Continue.
+    'append the byte' with character and written,
+    set 'open quote' to 'the quote open after the byte' with character and 'open quote'.
+  a text called 'line with its parameters' is "{written}".
+  Return a text, 'line with its parameters'.
+
+(What follows a percent sign in a macro's body: a parameter number, the
+ second percent sign of a %%label, or anything else, which is kept as it
+ stands. Answers where the reading goes on.)
+To 'put in the parameter' with a buffer called characters and a number called position and a buffer called written and a list called 'macro arguments' and a number called 'expansion number'.
+  a number called 'next character' is 0.
+  If position is less than or equal to characters's size then, set 'next character' to byte position of characters.
+  If 'the byte is a digit' with 'next character' then, Return a number, 'put in the argument' with characters and position and written and 'macro arguments'.
+  a number called 'character after that' is 0.
+  If position is less than characters's size then, set 'character after that' to byte {position add 1} of characters.
+  If 'next character' is '%' and {'the byte continues a name' with 'character after that'} then, append "..@{expansion number}." to written, Return a number, position add 1.
+  'append the byte' with '%' and written.
+  Return a number, position.
+
+(%0 is how many arguments there are, and %N the Nth of them, or nothing
+ when there are fewer.)
+To 'put in the argument' with a buffer called characters and a number called position and a buffer called written and a list called 'macro arguments'.
+  a number called 'parameter number' is 0.
+  a number called cursor is position.
+  a boolean called 'still on a digit' is true.
+  While 'still on a digit' and cursor is less than or equal to characters's size,
+    a number called character is byte cursor of characters,
+    set 'still on a digit' to 'the byte is a digit' with character,
+    if 'still on a digit' then, set 'parameter number' to {'parameter number' multiply 10} add {character subtract '0'}, increment cursor..
+  a number called 'argument count' is 'macro arguments''s length.
+  If 'parameter number' is 0 then, append "{'argument count'}" to written, Return a number, cursor.
+  If 'parameter number' is less than or equal to 'argument count' then, append "{element 'parameter number' of 'macro arguments'}" to written.
+  Return a number, cursor.
+
+(The tokens with every single-line macro in them replaced by its body,
+ and each replacement read again for macros of its own, the way NASM
+ rescans an expansion, as deep as 'deepest nesting'. A key put together
+ from a token is a new text, which Vox keeps until the program ends, so a
+ token is looked up in 'what vas knows' only when it is one of the names a
+ single-line macro has been given; reading that list once for the line
+ costs one copy of it, where a look for every token cost one each.)
+To 'the tokens with definitions expanded' with a list called tokens and a map called 'what vas knows' and a number called depth and a text called 'source name' and a number called 'line number' and a buffer called diagnostics.
+  a list called expanded is [].
+  a list called 'defined names' is 'what vas knows''s "defined names".
+  a number called position is 1.
+  While position is less than or equal to tokens's length,
+    a text called token is element position of tokens,
+    a number called 'place among the defined names' is 'where the text stands' with 'defined names' and token,
+    if 'place among the defined names' is 0 then, append {element position of tokens} to expanded, increment position.
+    if 'place among the defined names' is greater than 0 then, set position to 'expand the token' with position and tokens and expanded and 'what vas knows' and depth and 'source name' and 'line number' and diagnostics..
+  Return a list, expanded.
+
+(One token that has been given a single-line macro onto the expansion,
+ replaced if it still names one. Answers the position of the next token to
+ read.)
+To 'expand the token' with a number called position and a list called tokens and a list called expanded and a map called 'what vas knows' and a number called depth and a text called 'source name' and a number called 'line number' and a buffer called diagnostics.
+  a text called token is element position of tokens.
+  a number called kind is 'what vas knows''s "define {token}".
+  If kind is 0 then, append {element position of tokens} to expanded, Return a number, position add 1.
+  If depth is 'deepest nesting' then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the single-line macro {token} expands more than {depth} levels deep", Return a number, position add 1.
+  If kind is 'definition with parameters' then, Return a number, 'expand the call' with position and tokens and expanded and 'what vas knows' and depth and 'source name' and 'line number' and diagnostics.
+  a text called body is 'what vas knows''s "definition {token}".
+  a list called replacement is 'the tokens of' of body.
+  a list called rescanned is 'the tokens with definitions expanded' with replacement and 'what vas knows' and {depth add 1} and 'source name' and 'line number' and diagnostics.
+  'append every token' with rescanned and expanded.
+  Return a number, position add 1.
+
+(A single-line macro with parameters, used with an argument list: its body
+ with each parameter name replaced by its argument, read again. Used
+ without an argument list, the name is left as it stands, as NASM leaves
+ it.)
+To 'expand the call' with a number called position and a list called tokens and a list called expanded and a map called 'what vas knows' and a number called depth and a text called 'source name' and a number called 'line number' and a buffer called diagnostics.
+  a text called token is element position of tokens.
+  a number called opening is 'the position of the next word' with tokens and {position add 1}.
+  a text called 'after the name' is 'the token at the position' with tokens and opening.
+  If 'after the name' is not "(" then, append {element position of tokens} to expanded, Return a number, position add 1.
+  a number called closing is 'the position of the closing parenthesis' with tokens and opening.
+  If closing is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the arguments of {token} are never closed with a parenthesis", Return a number, tokens's length add 1.
+  a list called 'call arguments' is 'the call arguments' with tokens and opening and closing.
+  a text called 'parameter names' is 'what vas knows''s "parameters {token}".
+  a list called 'parameter list' is 'the names separated by commas' of 'parameter names'.
+  a number called 'arguments given' is 'call arguments''s length.
+  a number called 'parameters taken' is 'parameter list''s length.
+  If 'arguments given' is not 'parameters taken' then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "{token} takes {parameters taken} arguments but is given {arguments given}", Return a number, closing add 1.
+  a text called body is 'what vas knows''s "definition {token}".
+  a list called 'body tokens' is 'the tokens of' of body.
+  Create a buffer called written.
+  For each 'body position' from 1 to 'body tokens''s length,
+    a text called 'body token' is element 'body position' of 'body tokens',
+    a number called 'which parameter' is 'where the text stands' with 'parameter list' and 'body token',
+    a text called replacement is 'body token',
+    if 'which parameter' is greater than 0 then, set replacement to element 'which parameter' of 'call arguments'.
+    append "{replacement}" to written.
+  a text called 'substituted body' is "{written}".
+  a list called 'replacement tokens' is 'the tokens of' of 'substituted body'.
+  a list called rescanned is 'the tokens with definitions expanded' with 'replacement tokens' and 'what vas knows' and {depth add 1} and 'source name' and 'line number' and diagnostics.
+  'append every token' with rescanned and expanded.
+  Return a number, closing add 1.
+
+(The arguments between a call's parentheses, split at the commas outside
+ any parentheses nested inside them.)
+To 'the call arguments' with a list called tokens and a number called opening and a number called closing.
+  a list called 'call arguments' is [].
+  a number called 'where this argument begins' is opening add 1.
+  a number called nesting is 0.
+  For each position from {opening add 1} to {closing subtract 1},
+    a text called token is element position of tokens,
+    if token is "(" then, increment nesting.
+    if token is ")" then, decrement nesting.
+    if token is "," and nesting is 0 then, append {'the tokens written back out' with tokens and 'where this argument begins' and {position subtract 1}} to 'call arguments', set 'where this argument begins' to position add 1..
+  append {'the tokens written back out' with tokens and 'where this argument begins' and {closing subtract 1}} to 'call arguments'.
+  Return a list, 'call arguments'.
+
+(A call of a multi-line macro: its arguments, split at commas, are given
+ to its body, which runs through the preprocessor as a run of lines of
+ its own. Each expansion has its own number for its %%labels, and
+ expansions nest no deeper than 'deepest nesting'.)
+To 'expand the macro' with a text called 'macro name' and a list called tokens and a number called 'where the arguments begin' and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a number called depth is 'what vas knows''s "depth".
+  If depth is 'deepest nesting' then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the macro {macro name} is expanded more than {depth} levels deep", Return.
+  a list called 'macro arguments' is 'the macro arguments' with tokens and 'where the arguments begin'.
+  a number called minimum is macros's "minimum {macro name}".
+  a number called maximum is macros's "maximum {macro name}".
+  a number called 'arguments given' is 'macro arguments''s length.
+  If 'arguments given' is less than minimum or maximum is not 'no limit' and 'arguments given' is greater than maximum then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the macro {macro name} is given {arguments given} arguments, which is not a count it takes", Return.
+  a list called body is macros's "body {macro name}".
+  a list called 'body line numbers' is macros's "lines {macro name}".
+  a text called 'macro file' is macros's "file {macro name}".
+  a number called 'outer expansion' is 'what vas knows''s "current expansion".
+  a number called 'expansions so far' is 'what vas knows''s "expansions so far".
+  Set 'what vas knows''s "expansions so far" to 'expansions so far' add 1.
+  Set 'what vas knows''s "current expansion" to 'expansions so far' add 1.
+  Set 'what vas knows''s "depth" to depth add 1.
+  'process the lines' with body and 'body line numbers' and 'macro file' and 'macro arguments' and 'what vas knows' and macros and statements and diagnostics.
+  Set 'what vas knows''s "depth" to depth.
+  Set 'what vas knows''s "current expansion" to 'outer expansion'.
+
+(A macro call's arguments: split at the commas outside braces, each with
+ the spaces at its ends taken off, and the braces taken off one that is
+ wrapped in them so it can hold a comma. None at all when nothing follows
+ the macro's name.)
+To 'the macro arguments' with a list called tokens and a number called start.
+  a list called 'macro arguments' is [].
+  a number called 'where this argument begins' is start.
+  a number called nesting is 0.
+  For each position from start to tokens's length,
+    a text called token is element position of tokens,
+    if token is "{{" then, increment nesting.
+    if token is "}}" then, decrement nesting.
+    if token is "," and nesting is 0 then, append {'one macro argument' with tokens and 'where this argument begins' and {position subtract 1}} to 'macro arguments', set 'where this argument begins' to position add 1..
+  a text called 'final argument' is 'one macro argument' with tokens and 'where this argument begins' and tokens's length.
+  If 'macro arguments''s length is 0 and 'final argument' is "" then, Return a list, 'macro arguments'.
+  append 'final argument' to 'macro arguments'.
+  Return a list, 'macro arguments'.
+
+To 'one macro argument' with a list called tokens and a number called first and a number called last.
+  a text called written is 'the tokens written back out' with tokens and first and last.
+  a number called 'first character' is 'the first character of' of written.
+  a number called 'last character' is 'the last character of' of written.
+  If 'first character' is not '{' or 'last character' is not '}' then, Return a text, written.
+  a buffer called characters is "{written}".
+  Return a text, 'the bytes as text' with characters and 2 and {characters's size subtract 1}.
+
+(A line that is not a preprocessor directive. Its single-line macros are
+ expanded, and a label in front of it is taken off and recorded. What is
+ left is an equ, which names the label's value; a call of a multi-line
+ macro, expanded in its place; or one statement.)
+To 'assemble the line' with a list called tokens and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a map called macros and a list called statements and a buffer called diagnostics.
+  a list called expanded is 'the tokens with definitions expanded' with tokens and 'what vas knows' and 0 and 'source name' and 'line number' and diagnostics.
+  a number called 'first position' is 'the position of the next word' with expanded and 1.
+  If 'first position' is greater than expanded's length then, Return.
+  a text called 'first word' is element 'first position' of expanded.
+  a number called 'colon position' is 'the position of the colon after the label' with expanded and 'first position'.
+  a number called 'rest position' is 'first position'.
+  If 'colon position' is greater than 0 then, set 'rest position' to 'the position of the next word' with expanded and {'colon position' add 1}.
+  a text called 'rest word' is 'the token at the position' with expanded and 'rest position'.
+  If 'colon position' is greater than 0 and 'rest word' is "equ" then, 'record the constant' with 'first word' and expanded and 'first position' and {'rest position' add 1} and 'source name' and 'line number' and 'what vas knows' and statements and diagnostics, Return.
+  If 'colon position' is greater than 0 then, 'record the label' with 'first word' and 'source name' and 'line number' and 'what vas knows' and statements and diagnostics.
+  If 'rest position' is greater than expanded's length then, Return.
+  a boolean called 'it calls a macro' is 'what vas knows''s "macro {rest word}".
+  If 'it calls a macro' then, 'expand the macro' with 'rest word' and expanded and {'rest position' add 1} and 'source name' and 'line number' and 'what vas knows' and macros and statements and diagnostics, Return.
+  'record the statement' with expanded and 'rest position' and 'source name' and 'line number' and 'what vas knows' and statements and diagnostics.
+
+(Is the word at this position a label, a name followed by a colon? If it
+ is, answers where the colon is; if not, 0.)
+To 'the position of the colon after the label' with a list called tokens and a number called position.
+  a number called 'colon position' is 'the position of the next word' with tokens and {position add 1}.
+  a text called 'after the word' is 'the token at the position' with tokens and 'colon position'.
+  If 'after the word' is not ":" then, Return a number, 0.
+  a text called word is element position of tokens.
+  a number called 'first character' is 'the first character of' of word.
+  If 'the byte begins a name' with 'first character' then, Return a number, 'colon position'.
+  Return a number, 0.
+
+(A label's full name. A local label, one that begins with a dot, belongs
+ to the last label that did not, and its full name is that label's name
+ with its own after it, as NASM scopes it. A label of NASM's ..@ form,
+ which is what a macro's %%labels become, belongs to no other label.)
+To 'the scoped name' with a text called 'label name' and a text called scope.
+  a buffer called characters is "{label name}".
+  If characters's size is 0 then, Return a text, 'label name'.
+  If byte 1 of characters is not '.' then, Return a text, 'label name'.
+  If characters's size is greater than 1 and byte 2 of characters is '.' then, Return a text, 'label name'.
+  a text called 'full name' is "".
+  Set 'full name' to "{scope}{label name}".
+  Return a text, 'full name'.
+
+(A label or constant may be defined once.)
+To 'claim the name' with a text called 'full name' and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a buffer called diagnostics.
+  a boolean called 'it is claimed' is 'what vas knows''s "label {full name}".
+  If 'it is claimed' then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the label {full name} is defined more than once", Return.
+  Set 'what vas knows''s "label {full name}" to true.
+
+(A label, recorded as a statement of its own. A label that is not local
+ starts the scope of the local labels after it.)
+To 'record the label' with a text called 'label name' and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a list called statements and a buffer called diagnostics.
+  a text called scope is 'what vas knows''s "scope".
+  a text called 'full name' is 'the scoped name' with 'label name' and scope.
+  a number called 'first character' is 'the first character of' of 'label name'.
+  If 'first character' is not '.' then, Set 'what vas knows''s "scope" to 'label name'.
+  'claim the name' with 'full name' and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  a text called section is 'what vas knows''s "section".
+  a text called written is "".
+  Set written to "{label name}:".
+  a map called record is {"kind": "label", "name": 'label name', "full name": 'full name', "file": 'source name', "line": 'line number', "section": section, "scope": scope, "text": written}.
+  'keep the record' with record and statements and 'what vas knows'.
+
+(An equ: a name for the value of an expression. When the expression holds
+ nothing but numbers and constants already worked out, its value is
+ worked out now, and later expressions can use it; one that depends on a
+ label or on $ waits for the encoder, which knows the addresses. An equ
+ does not change which label the local labels after it belong to, as in
+ NASM.)
+To 'record the constant' with a text called 'constant name' and a list called tokens and a number called 'label position' and a number called 'expression position' and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a list called statements and a buffer called diagnostics.
+  a text called written is 'the tokens written back out' with tokens and 'label position' and tokens's length.
+  a text called scope is 'what vas knows''s "scope".
+  a text called 'full name' is 'the scoped name' with 'constant name' and scope.
+  'claim the name' with 'full name' and 'source name' and 'line number' and 'what vas knows' and diagnostics.
+  a list called words is 'the words in the tokens' with tokens and 'expression position' and tokens's length.
+  If words's length is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "the equ for {constant name} has no expression", Return.
+  a map called reader is 'a reader of the words' with 1 and words's length.
+  a number called 'expression value' is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and problem, Return.
+  a boolean called 'it is constant' is reader's "constant".
+  a text called names is reader's "names".
+  If 'it is constant' then, Set 'what vas knows''s "constant known {full name}" to true, Set 'what vas knows''s "constant {full name}" to 'expression value'.
+  a text called section is 'what vas knows''s "section".
+  a text called expression is 'the words joined by spaces' with words and 1 and words's length.
+  a map called record is {"kind": "constant", "name": 'constant name', "full name": 'full name', "expression": expression, "is constant": 'it is constant', "value": 'expression value', "names": names, "file": 'source name', "line": 'line number', "section": section, "scope": scope, "text": written}.
+  'keep the record' with record and statements and 'what vas knows'.
+
+(--- Statements ------------------------------------------------------------)
+
+(Every statement becomes a record, a map on the statements list, that the
+ encoder reads. Each record has a "kind", the "file" and "line" it was
+ written on, the "section" it goes into, the "scope" its local labels
+ belong to, and its "text", the statement as written once every macro was
+ expanded. By kind, the rest is:
+
+   label        "name", and "full name" with its scope
+   constant     "name", "full name", "expression", "is constant", "value",
+                and "names", the names the expression waits on
+   section      "name" and "attributes"
+   global       "names", separated by commas
+   default      "mode", which is rel
+   align        "boundary"
+   data         "unit", 1 or 8 bytes, and "items", each a map with
+                "kind" (string, float or expression), "text", "is
+                constant", "value" and "names"
+   reservation  "unit", "count", "count is constant", "count value"
+   instruction  "mnemonic", with rep before it when it has the prefix,
+                and "operands", each a map with "kind", "size" (byte, word,
+                dword, qword or empty) and "text", and by kind:
+                  register    "register", "class" (r64, r32, r16, r8 or
+                              xmm) and "number", 0 to 15
+                  memory      "relative", "base", "index", "scale", and
+                              "displacement", "displacement is constant",
+                              "displacement value", "displacement names"
+                  expression  "expression", "is constant", "value", "names"
+
+ A statement under a times prefix also has "repeat", the count as written,
+ "repeat is constant" and "repeat count".)
+
+(One statement: its words classified and parsed into a record, which goes
+ on the statements list unless something is wrong with it.)
+To 'record the statement' with a list called tokens and a number called start and a text called 'source name' and a number called 'line number' and a map called 'what vas knows' and a list called statements and a buffer called diagnostics.
+  a list called words is 'the words in the tokens' with tokens and start and tokens's length.
+  (The statement's bytes are read for a refused form from the buffer it
+   is written in, rather than a copy of its text)
+  Create a buffer called 'statement characters'.
+  'write the tokens back out' with tokens and start and tokens's length and 'statement characters'.
+  a text called written is "{statement characters}".
+  a text called section is 'what vas knows''s "section".
+  a text called scope is 'what vas knows''s "scope".
+  a map called record is {"kind": "", "file": 'source name', "line": 'line number', "section": section, "scope": scope, "text": written, "repeat": "", "repeat is constant": true, "repeat count": 1}.
+  a text called refused is 'the refused form in' with 'statement characters'.
+  If refused is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and refused, Return.
+  a text called 'shared construct' is 'the shared build construct in' with words.
+  If 'shared construct' is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and {'the shared build refusal message of' of 'shared construct'}, Set 'what vas knows''s "a shared build was refused" to true, Return.
+  a text called keyword is element 1 of words.
+  a number called 'keyword position' is 1.
+  If keyword is "times" then, set 'keyword position' to 'read the repeat count' with words and record and 'what vas knows' and 'source name' and 'line number' and diagnostics.
+  If 'keyword position' is 0 then, Return.
+  'classify the statement' with words and 'keyword position' and record and 'what vas knows' and 'source name' and 'line number' and diagnostics.
+  a text called kind is record's "kind".
+  If kind is not "" then, 'keep the record' with record and statements and 'what vas knows'.
+
+(The construct only a shared build writes that a statement opens with,
+ extern or a .fini_array section, or the empty text for any other
+ statement. Such a source is refused as soon as one is met: see 'process
+ the lines'.)
+To 'the shared build construct in' with a list called words.
+  a text called keyword is element 1 of words.
+  If keyword is "extern" then, Return a text, "extern".
+  If keyword is "section" and {'the token at the position' with words and 'the position after the leading word'} is ".fini_array" then, Return a text, "the section .fini_array".
+  Return a text, "".
+
+(A record onto the statements list. A caller that wants only the
+ expansion marks 'what vas knows' so, and then the statement's text alone
+ is kept: a record put on a list is a copy of it, with every list and map
+ inside it, and Vox keeps every copy until the program ends.)
+To 'keep the record' with a map called record and a list called statements and a map called 'what vas knows'.
+  a boolean called 'only the text is wanted' is 'what vas knows''s "only the text is wanted".
+  If 'only the text is wanted' then, append {record's "text"} to statements, Return.
+  append record to statements.
+
+(A form NASM gives a meaning vas does not take, which can stand anywhere in
+ a statement: a backquoted string, token pasting with %+, a context-local
+ name such as %$x, a braced parameter such as %{1}, or a macro parameter
+ or %%label outside any macro. A percent sign before a space or a
+ parenthesis is the modulo operator. The statement is read once, a byte
+ at a time, rather than a buffer made for every word in it.)
+To 'the refused form in' with a buffer called characters.
+  a number called 'open quote' is 0.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if 'open quote' is 0 and character is '`' then, Return a text, 'the refusal message of' of "a backquoted string".
+    if 'open quote' is 0 and character is '%' and {'the percent sign begins a form' with characters and position} then, Return a text, 'the problem with the percent form' with characters and position.
+    set 'open quote' to 'the quote open after the byte' with character and 'open quote'.
+  Return a text, "".
+
+(Is the percent sign at this position the start of a word of its own,
+ rather than the modulo operator?)
+To 'the percent sign begins a form' with a buffer called characters and a number called position.
+  If position is equal to characters's size then, Return a boolean, false.
+  a number called 'next character' is byte {position add 1} of characters.
+  If 'next character' is '%' or 'next character' is '+' or 'next character' is '{' then, Return a boolean, true.
+  Return a boolean, 'the byte continues a name' with 'next character'.
+
+(What is wrong with the percent form at this position.)
+To 'the problem with the percent form' with a buffer called characters and a number called position.
+  Create a buffer called spelling.
+  (Only the word is wanted here, not where the reading would go on)
+  'read a percent word' with characters and position and spelling.
+  a text called word is "{spelling}".
+  If 'the text has the prefix' with word and "%+" then, Return a text, 'the refusal message of' of "token pasting with %+".
+  If 'the text has the prefix' with word and "%{{" then, Return a text, 'the refusal message of' of "the braced macro parameter {word}".
+  If 'the text has the prefix' with word and "%$" then, Return a text, 'the refusal message of' of "the context-local name {word}".
+  If 'the text has the prefix' with word and "%%" then, Return a text, 'the refusal message of' of "the operator %% or the macro-local label {word} outside a macro".
+  a boolean called 'it is a parameter' is 'the byte is a digit' with {byte {position add 1} of characters}.
+  a text called complaint is "".
+  Set complaint to "the preprocessor word {word} has no meaning here".
+  If 'it is a parameter' then, Set complaint to "the macro parameter {word} is used outside a macro".
+  Return a text, complaint.
+
+(A times prefix: the count, up to the first word that begins a statement,
+ and then the statement it repeats. Answers where that statement begins,
+ or 0 when there is none.)
+To 'read the repeat count' with a list called words and a map called record and a map called 'what vas knows' and a text called 'source name' and a number called 'line number' and a buffer called diagnostics.
+  a number called 'statement position' is 0.
+  a number called 'count position' is 'the position after the leading word'.
+  For each position from {'count position' add 1} to words's length,
+    a text called keyword is element position of words,
+    if 'statement position' is 0 and {'the word begins a statement' with keyword and 'what vas knows'} then, set 'statement position' to position..
+  If 'statement position' is 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and "times has no statement after its count", Return a number, 0.
+  a map called reader is 'a reader of the words' with 'count position' and {'statement position' subtract 1}.
+  a number called repetitions is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and problem, Return a number, 0.
+  a boolean called 'it is constant' is reader's "constant".
+  Set record's "repeat" to 'the words joined by spaces' with words and 'count position' and {'statement position' subtract 1}.
+  Set record's "repeat is constant" to 'it is constant'.
+  Set record's "repeat count" to repetitions.
+  Return a number, 'statement position'.
+
+(Does this word begin a statement a times prefix can repeat?)
+To 'the word begins a statement' with a text called keyword and a map called 'what vas knows'.
+  a number called 'data unit' is 'the data unit of' of keyword.
+  If 'data unit' is greater than 0 then, Return a boolean, true.
+  a number called kind is 'what vas knows''s "word {keyword}".
+  Return a boolean, kind is 'mnemonic kind'.
+
+(How many bytes each item of a data directive takes, or 0 for a word that
+ is not one. The corpus lays down bytes and quadwords.)
+To 'the data unit of' of a text called keyword.
+  If keyword is "db" then, Return a number, 1.
+  If keyword is "dq" then, Return a number, 8.
+  Return a number, 0.
+
+(How many bytes each unit a reservation counts takes, or 0 for a word that
+ is not one. The corpus reserves bytes, doublewords and quadwords.)
+To 'the reserve unit of' of a text called keyword.
+  If keyword is "resb" then, Return a number, 1.
+  If keyword is "resd" then, Return a number, 4.
+  If keyword is "resq" then, Return a number, 8.
+  Return a number, 0.
+
+(Is the word at this position a statement's last, with nothing after it
+ for the statement to work on?)
+To 'nothing follows the word' with a list called words and a number called position.
+  Return a boolean, words's length is position.
+
+(Find out what the statement at this word is, and parse it into the
+ record. Each kind is read by a step that answers what is wrong with the
+ statement, or the empty text when nothing is.)
+To 'classify the statement' with a list called words and a number called position and a map called record and a map called 'what vas knows' and a text called 'source name' and a number called 'line number' and a buffer called diagnostics.
+  a text called keyword is element position of words.
+  a text called problem is "".
+  a boolean called 'it is a recognised statement' is false.
+  If keyword is "section" then, set problem to 'read the section' with words and position and record and 'what vas knows', set 'it is a recognised statement' to true.
+  If keyword is "global" then, set problem to 'read the globals' with words and position and record and 'what vas knows', set 'it is a recognised statement' to true.
+  If keyword is "default" then, set problem to 'read the default' with words and position and record and 'what vas knows', set 'it is a recognised statement' to true.
+  If keyword is "align" then, set problem to 'read the alignment' with words and position and record and 'what vas knows', set 'it is a recognised statement' to true.
+  a number called 'data unit' is 'the data unit of' of keyword.
+  If 'data unit' is greater than 0 then, set problem to 'read the data' with words and position and 'data unit' and record and 'what vas knows', set 'it is a recognised statement' to true.
+  a number called 'reserve unit' is 'the reserve unit of' of keyword.
+  If 'reserve unit' is greater than 0 then, set problem to 'read the reservation' with words and position and 'reserve unit' and record and 'what vas knows', set 'it is a recognised statement' to true.
+  a number called kind is 0.
+  If 'it is a recognised statement' is false then, set kind to 'what vas knows''s "word {keyword}".
+  If kind is 'mnemonic kind' or keyword is "rep" then, set problem to 'read the instruction' with words and position and record and 'what vas knows', set 'it is a recognised statement' to true.
+  If 'it is a recognised statement' is false then, set problem to 'the problem with the word' with keyword and kind.
+  If problem is not "" then, complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and problem, Set record's "kind" to "".
+
+(What is wrong with a statement whose first word vas does not take,
+ given the word and its kind in the vocabulary.)
+To 'the problem with the word' with a text called keyword and a number called kind.
+  If keyword is "equ" then, Return a text, "equ needs a name and a colon in front of it".
+  If kind is 'refused directive kind' then, Return a text, 'the refusal message of' of "the directive {keyword}".
+  If kind is 'refused prefix kind' then, Return a text, 'the refusal message of' of "the prefix {keyword}".
+  a text called complaint is "".
+  Set complaint to "vas does not know the instruction or macro {keyword}".
+  Return a text, complaint.
+
+(A section directive. The four sections the compiler and coreasm put
+ code and data in are taken as they are; .note.GNU-stack, with exactly the
+ attributes the compiler writes, marks the stack as not executable.
+ .fini_array, written only for a shared library, never reaches here: see
+ 'the shared build construct in'. Every other section is refused.)
+To 'read the section' with a list called words and a number called position and a map called record and a map called 'what vas knows'.
+  If 'nothing follows the word' with words and position then, Return a text, "section needs a name".
+  (A section name runs to the next space, so .note.GNU-stack is one name
+   though a dash would part two words of an expression)
+  a text called written is record's "text".
+  a list called pieces is 'the pieces between spaces of' of written.
+  a number called 'name position' is 'the position after the leading word'.
+  a text called 'section name' is 'the token at the position' with pieces and 'name position'.
+  a text called attributes is 'the words joined by spaces' with pieces and {'name position' add 1} and pieces's length.
+  a boolean called 'it is an ordinary section' is false.
+  If 'section name' is ".text" or 'section name' is ".data" or 'section name' is ".bss" or 'section name' is ".rodata" then, set 'it is an ordinary section' to true.
+  If 'it is an ordinary section' and attributes is not "" then, Return a text, 'the refusal message of' of "the section attributes {attributes}".
+  If 'section name' is ".note.GNU-stack" and attributes is not "noalloc noexec nowrite progbits" then, Return a text, 'the refusal message of' of "the section attributes {attributes}".
+  If 'it is an ordinary section' is false and 'section name' is not ".note.GNU-stack" then, Return a text, 'the refusal message of' of "the section {section name}".
+  If 'section name' is ".note.GNU-stack" then, Set 'what vas knows''s "stack is not executable" to true.
+  Set 'what vas knows''s "section" to 'section name'.
+  Set record's "kind" to "section".
+  Set record's "section" to 'section name'.
+  Set record's "name" to 'section name'.
+  Set record's "attributes" to attributes.
+  Return a text, "".
+
+(A global directive. A flat executable has no symbol table to export to,
+ so the names are only noted.)
+To 'read the globals' with a list called words and a number called position and a map called record and a map called 'what vas knows'.
+  If 'nothing follows the word' with words and position then, Return a text, "global needs a name".
+  For each 'word position' from {position add 1} to words's length,
+    a text called word is element 'word position' of words,
+    if word is not "," then, Set 'what vas knows''s "global {word}" to true..
+  Set record's "kind" to "global".
+  Set record's "names" to 'the words joined with nothing between' with words and {position add 1} and words's length.
+  Return a text, "".
+
+(default rel: memory operands that name a label are relative to the
+ instruction pointer without saying rel. NASM's other default, abs, is
+ the one it starts with, and is outside the subset.)
+To 'read the default' with a list called words and a number called position and a map called record and a map called 'what vas knows'.
+  a text called mode is 'the token at the position' with words and {position add 1}.
+  If mode is not "rel" or words's length is greater than {position add 1} then, Return a text, 'the refusal message of' of "default {mode}".
+  Set 'what vas knows''s "default relative" to true.
+  Set record's "kind" to "default".
+  Set record's "mode" to mode.
+  Return a text, "".
+
+(An align: the next statement goes on a boundary, a power of two known
+ before anything is assembled. The encoder pads up to it with nop, as
+ NASM's align does.)
+To 'read the alignment' with a list called words and a number called position and a map called record and a map called 'what vas knows'.
+  If 'nothing follows the word' with words and position then, Return a text, "align needs a boundary".
+  If {'where the text stands' with words and ","} is greater than 0 then, Return a text, 'the refusal message of' of "align with a fill of its own".
+  a map called reader is 'a reader of the words' with {position add 1} and words's length.
+  a number called boundary is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is constant' is reader's "constant".
+  If 'it is constant' is false then, Return a text, "the boundary of align must be known before anything is assembled".
+  If not 'the boundary is a power of two' with boundary then, Return a text, "the boundary of align must be a power of two".
+  Set record's "kind" to "align".
+  Set record's "boundary" to boundary.
+  Return a text, "".
+
+To 'the boundary is a power of two' with a number called boundary.
+  If boundary is less than 1 then, Return a boolean, false.
+  a number called 'the bits below' is boundary bit-and {boundary subtract 1}.
+  Return a boolean, 'the bits below' is 0.
+
+(A data directive, db or dq, and its items, separated by commas
+ outside parentheses.)
+To 'read the data' with a list called words and a number called position and a number called unit and a map called record and a map called 'what vas knows'.
+  If 'nothing follows the word' with words and position then, Return a text, "a data directive needs at least one item".
+  a list called items is [].
+  a number called 'item start' is position add 1.
+  a number called nesting is 0.
+  a text called problem is "".
+  For each 'word position' from {position add 1} to words's length,
+    a text called word is element 'word position' of words,
+    if word is "(" then, increment nesting.
+    if word is ")" then, decrement nesting.
+    if word is "," and nesting is 0 and problem is "" then, set problem to 'read the data item' with words and 'item start' and {'word position' subtract 1} and items and 'what vas knows', set 'item start' to 'word position' add 1..
+  If problem is "" then, set problem to 'read the data item' with words and 'item start' and words's length and items and 'what vas knows'.
+  If problem is not "" then, Return a text, problem.
+  Set record's "kind" to "data".
+  Set record's "unit" to unit.
+  (A list put in a map is a copy of it, and a record kept only for its
+   text is never read again: see 'keep the record')
+  a boolean called 'only the text is wanted' is 'what vas knows''s "only the text is wanted".
+  If 'only the text is wanted' is false then, Set record's "items" to items.
+  Set record's "item count" to items's length.
+  Return a text, "".
+
+(One item of a data directive: a quoted string, whose bytes the encoder
+ lays down; a floating-point number, kept as written for the encoder to
+ turn into its bits; or an expression.)
+To 'read the data item' with a list called words and a number called first and a number called last and a list called items and a map called 'what vas knows'.
+  If first is greater than last then, Return a text, "a data directive has an empty item".
+  a text called written is 'the words joined by spaces' with words and first and last.
+  a text called 'first word' is element first of words.
+  a number called 'first character' is 'the first character of' of 'first word'.
+  a map called item is {"kind": "expression", "text": written, "is constant": false, "value": 0, "names": ""}.
+  a boolean called 'it is a string' is false.
+  If 'first character' is '"' or 'first character' is 'single quote mark' then, set 'it is a string' to true.
+  a boolean called 'the item is one word' is false.
+  If first is last then, set 'the item is one word' to true.
+  If 'the item is one word' and 'it is a string' then, Set item's "kind" to "string", append item to items, Return a text, "".
+  a boolean called 'its last word spells a float' is 'the word spells a float' with {element last of words}.
+  a boolean called 'a sign comes first' is false.
+  If 'first word' is "-" or 'first word' is "+" then, set 'a sign comes first' to true.
+  a boolean called 'it is a float' is false.
+  If 'the item is one word' and 'its last word spells a float' then, set 'it is a float' to true.
+  If last is first add 1 and 'a sign comes first' and 'its last word spells a float' then, set 'it is a float' to true.
+  If 'it is a float' then, Set item's "kind" to "float", append item to items, Return a text, "".
+  a map called reader is 'a reader of the words' with first and last.
+  a number called 'expression value' is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is constant' is reader's "constant".
+  a text called names is reader's "names".
+  Set item's "is constant" to 'it is constant'.
+  Set item's "value" to 'expression value'.
+  Set item's "names" to names.
+  append item to items.
+  Return a text, "".
+
+(A floating-point number begins with a digit and has a point in it.)
+To 'the word spells a float' with a text called word.
+  a buffer called characters is "{word}".
+  If characters's size is 0 then, Return a boolean, false.
+  If not 'the byte is a digit' with {byte 1 of characters} then, Return a boolean, false.
+  For each position from 1 to characters's size,
+    if byte position of characters is '.' then, Return a boolean, true..
+  Return a boolean, false.
+
+(A reservation, resb, resd or resq: room for a count of units in .bss.)
+To 'read the reservation' with a list called words and a number called position and a number called unit and a map called record and a map called 'what vas knows'.
+  If 'nothing follows the word' with words and position then, Return a text, "a reservation needs a count".
+  a map called reader is 'a reader of the words' with {position add 1} and words's length.
+  a number called 'the count' is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is constant' is reader's "constant".
+  Set record's "kind" to "reservation".
+  Set record's "unit" to unit.
+  Set record's "count" to 'the words joined by spaces' with words and {position add 1} and words's length.
+  Set record's "count is constant" to 'it is constant'.
+  Set record's "count value" to 'the count'.
+  Return a text, "".
+
+(An instruction: its mnemonic and its operands, separated by commas
+ outside brackets and parentheses. The rep prefix is taken only before
+ the two string instructions the corpus repeats, movsb and stosb, and is
+ kept as part of the mnemonic.)
+To 'read the instruction' with a list called words and a number called position and a map called record and a map called 'what vas knows'.
+  a text called mnemonic is element position of words.
+  a number called 'operand start' is position add 1.
+  a text called repeated is "".
+  If mnemonic is "rep" then, set repeated to 'the token at the position' with words and 'operand start', set 'operand start' to 'operand start' add 1.
+  If mnemonic is "rep" and repeated is not "movsb" and repeated is not "stosb" then, Return a text, 'the refusal message of' of "rep before {repeated}".
+  If mnemonic is "rep" then, set mnemonic to "rep {repeated}".
+  a list called operands is [].
+  a number called 'operand begins' is 'operand start'.
+  a number called nesting is 0.
+  a text called problem is "".
+  For each 'word position' from 'operand start' to words's length,
+    a text called word is element 'word position' of words,
+    if word is "(" or word is "[" then, increment nesting.
+    if word is ")" or word is "]" then, decrement nesting.
+    if word is "," and nesting is 0 and problem is "" then, set problem to 'read the operand' with words and 'operand begins' and {'word position' subtract 1} and operands and 'what vas knows', set 'operand begins' to 'word position' add 1..
+  If problem is "" and 'operand start' is less than or equal to words's length then, set problem to 'read the operand' with words and 'operand begins' and words's length and operands and 'what vas knows'.
+  If problem is not "" then, Return a text, problem.
+  Set record's "kind" to "instruction".
+  Set record's "mnemonic" to mnemonic.
+  (As in 'read the data', the operands are copied in only for a record
+   that is kept)
+  a boolean called 'only the text is wanted' is 'what vas knows''s "only the text is wanted".
+  If 'only the text is wanted' is false then, Set record's "operands" to operands.
+  Set record's "operand count" to operands's length.
+  Return a text, "".
+
+(One operand: a register, a memory reference in brackets, or an
+ expression, which is an immediate or the target of a jump or a call. A
+ size word may come first.)
+To 'read the operand' with a list called words and a number called first and a number called last and a list called operands and a map called 'what vas knows'.
+  If first is greater than last then, Return a text, "an instruction has an empty operand".
+  a text called written is 'the words joined by spaces' with words and first and last.
+  a map called operand is {"kind": "", "size": "", "text": written}.
+  a number called position is first.
+  a text called 'size word' is element position of words.
+  If 'size word' is "byte" or 'size word' is "word" or 'size word' is "dword" or 'size word' is "qword" then, Set operand's "size" to 'size word', increment position.
+  If 'the word is a refused size word' with 'size word' then, Return a text, 'the refusal message of' of "the size word {size word}".
+  If position is greater than last then, Return a text, "the size word {size word} has no operand after it".
+  a text called 'opening word' is element position of words.
+  a text called problem is "".
+  If 'opening word' is "[" then, set problem to 'read the memory operand' with words and position and last and operand and 'what vas knows'.
+  If 'opening word' is not "[" and position is last then, set problem to 'read the single word operand' with words and position and operand and 'what vas knows'.
+  If 'opening word' is not "[" and position is less than last then, set problem to 'read the expression operand' with words and position and last and operand and 'what vas knows'.
+  If problem is not "" then, Return a text, problem.
+  append operand to operands.
+  Return a text, "".
+
+(The size words and jump qualifiers NASM has beyond the four the corpus
+ uses.)
+To 'the word is a refused size word' with a text called word.
+  If word is "tword" or word is "oword" or word is "yword" or word is "zword" then, Return a boolean, true.
+  Return a boolean, word is "short" or word is "near" or word is "far" or word is "strict".
+
+(An operand of one word: a register, or an expression of one name or
+ number.)
+To 'read the single word operand' with a list called words and a number called position and a map called operand and a map called 'what vas knows'.
+  a text called word is element position of words.
+  a number called kind is 'what vas knows''s "word {word}".
+  a text called class is 'the register class of' of kind.
+  If class is not "" then, Set operand's "kind" to "register", Set operand's "register" to word, Set operand's "class" to class, Set operand's "number" to {'what vas knows''s "register number {word}"}, Return a text, "".
+  If kind is 'refused register kind' then, Return a text, 'the refusal message of' of "the register {word}".
+  Return a text, 'read the expression operand' with words and position and position and operand and 'what vas knows'.
+
+(An operand that is an expression: an immediate, or a jump's or a call's
+ target.)
+To 'read the expression operand' with a list called words and a number called first and a number called last and a map called operand and a map called 'what vas knows'.
+  a map called reader is 'a reader of the words' with first and last.
+  a number called 'expression value' is 'the value of the expression' with words and 'what vas knows' and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is constant' is reader's "constant".
+  a text called names is reader's "names".
+  Set operand's "kind" to "expression".
+  Set operand's "expression" to 'the words joined by spaces' with words and first and last.
+  Set operand's "is constant" to 'it is constant'.
+  Set operand's "value" to 'expression value'.
+  Set operand's "names" to names.
+  Return a text, "".
+
+(A memory reference, [ ... ]. Its terms are split at the + and - signs
+ outside parentheses: a register alone is the base, or the index once
+ there is a base; a register times 1, 2, 4 or 8 is the index with its
+ scale; everything else adds up to the displacement. rel in front makes
+ it relative to the instruction pointer. The corpus addresses memory
+ through 64-bit registers only.)
+To 'read the memory operand' with a list called words and a number called opening and a number called last and a map called operand and a map called 'what vas knows'.
+  a text called 'closing word' is element last of words.
+  If 'closing word' is not "]" then, Return a text, "a memory operand is not closed with ]".
+  Set operand's "kind" to "memory".
+  Set operand's "relative" to false.
+  Set operand's "base" to "".
+  Set operand's "index" to "".
+  Set operand's "scale" to 0.
+  a number called position is opening add 1.
+  If position is last then, Return a text, "a memory operand is empty".
+  a text called 'first inside' is element position of words.
+  If 'first inside' is "rel" then, Set operand's "relative" to true, increment position.
+  If 'first inside' is "abs" then, Return a text, 'the refusal message of' of "abs in a memory operand".
+  a text called 'text after the word' is 'the token at the position' with words and {position add 1}.
+  If 'text after the word' is ":" then, Return a text, 'the refusal message of' of "a segment override".
+  a list called displacement is [].
+  a text called 'term sign' is "+".
+  a number called 'term start' is position.
+  a number called nesting is 0.
+  a text called problem is "".
+  For each 'word position' from position to {last subtract 1},
+    a text called word is element 'word position' of words,
+    a boolean called 'it is a sign' is false,
+    if word is "(" then, increment nesting.
+    if word is ")" then, decrement nesting.
+    if nesting is 0 and word is "+" then, set 'it is a sign' to true.
+    if nesting is 0 and word is "-" then, set 'it is a sign' to true.
+    if 'it is a sign' and 'word position' is 'term start' then, set 'term sign' to 'the combined sign' with 'term sign' and word, set 'term start' to 'word position' add 1.
+    if 'it is a sign' and 'word position' is greater than 'term start' and problem is "" then, set problem to 'take the memory term' with words and 'term start' and {'word position' subtract 1} and 'term sign' and operand and displacement and 'what vas knows', set 'term sign' to word, set 'term start' to 'word position' add 1..
+  If problem is "" and 'term start' is less than last then, set problem to 'take the memory term' with words and 'term start' and {last subtract 1} and 'term sign' and operand and displacement and 'what vas knows'.
+  If problem is "" and 'term start' is last then, set problem to "a memory operand has a sign with nothing after it".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is relative' is operand's "relative".
+  a text called base is operand's "base".
+  a text called index is operand's "index".
+  a boolean called 'it holds a register' is false.
+  If base is not "" or index is not "" then, set 'it holds a register' to true.
+  If 'it is relative' and 'it holds a register' then, Return a text, "a memory operand relative to the instruction pointer cannot hold a register".
+  Set operand's "displacement" to 'the words joined by spaces' with displacement and 1 and displacement's length.
+  Set operand's "displacement is constant" to true.
+  Set operand's "displacement value" to 0.
+  Set operand's "displacement names" to "".
+  If displacement's length is 0 then, Return a text, "".
+  a map called reader is 'a reader of the words' with 1 and displacement's length.
+  a number called 'expression value' is 'the value of the expression' with displacement and 'what vas knows' and reader.
+  set problem to reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is constant' is reader's "constant".
+  a text called names is reader's "names".
+  Set operand's "displacement is constant" to 'it is constant'.
+  Set operand's "displacement value" to 'expression value'.
+  Set operand's "displacement names" to names.
+  Return a text, "".
+
+(Two signs in a row make one: a minus turns the sign over.)
+To 'the combined sign' with a text called 'sign so far' and a text called word.
+  If word is "+" then, Return a text, 'sign so far'.
+  If 'sign so far' is "-" then, Return a text, "+".
+  Return a text, "-".
+
+(One term of a memory reference, with the sign in front of it.)
+To 'take the memory term' with a list called words and a number called first and a number called last and a text called 'term sign' and a map called operand and a list called displacement and a map called 'what vas knows'.
+  a text called 'first word' is element first of words.
+  a text called 'first class' is 'the register class of' of {'what vas knows''s "word {first word}"}.
+  If first is last and 'first class' is not "" then, Return a text, 'place the register' with 'first word' and 'first class' and 1 and 'term sign' and operand.
+  a text called 'last word' is element last of words.
+  a text called middle is 'the token at the position' with words and {first add 1}.
+  a boolean called 'it is scaled' is false.
+  If last is first add 2 and middle is "*" then, set 'it is scaled' to true.
+  a text called 'last class' is "".
+  If 'it is scaled' then, set 'last class' to 'the register class of' of {'what vas knows''s "word {last word}"}.
+  If 'it is scaled' and 'first class' is not "" then, Return a text, 'place the scaled register' with 'first word' and 'first class' and 'last word' and 'term sign' and operand.
+  If 'it is scaled' and 'last class' is not "" then, Return a text, 'place the scaled register' with 'last word' and 'last class' and 'first word' and 'term sign' and operand.
+  For each 'word position' from first to last,
+    a text called word is element 'word position' of words,
+    a text called class is 'the register class of' of {'what vas knows''s "word {word}"},
+    if class is not "" then, Return a text, "the register {word} cannot be part of an expression in a memory operand"..
+  If displacement's length is greater than 0 or 'term sign' is "-" then, append 'term sign' to displacement.
+  For each 'word position' from first to last,
+    append {element 'word position' of words} to displacement.
+  Return a text, "".
+
+(A register in a memory reference: the base, unless there is one already
+ or it is scaled, when it is the index.)
+To 'place the register' with a text called register and a text called class and a number called scale and a text called 'term sign' and a map called operand.
+  If class is not "r64" then, Return a text, 'the refusal message of' of "addressing memory through the register {register}".
+  If 'term sign' is "-" then, Return a text, "the register {register} cannot be subtracted in a memory operand".
+  a text called base is operand's "base".
+  a text called index is operand's "index".
+  If base is "" and scale is 1 then, Set operand's "base" to register, Return a text, "".
+  If index is not "" then, Return a text, "a memory operand holds more than two registers".
+  If register is "rsp" then, Return a text, "rsp cannot be the index register of a memory operand".
+  Set operand's "index" to register.
+  Set operand's "scale" to scale.
+  Return a text, "".
+
+To 'place the scaled register' with a text called register and a text called class and a text called 'scale word' and a text called 'term sign' and a map called operand.
+  If 'scale word' is not "1" and 'scale word' is not "2" and 'scale word' is not "4" and 'scale word' is not "8" then, Return a text, "the scale of an index register must be 1, 2, 4 or 8".
+  a number called scale is 'the decimal value of' of 'scale word'.
+  a text called index is operand's "index".
+  If scale is 1 then, Return a text, 'place the register' with register and class and 1 and 'term sign' and operand.
+  If index is not "" then, Return a text, "a memory operand holds more than one scaled register".
+  Return a text, 'place the register' with register and class and scale and 'term sign' and operand.
+
+(--- Expressions -----------------------------------------------------------)
+
+(An expression is read by recursive descent, one function to each level
+ of precedence, all of them sharing one reader map that holds where the
+ reading has got to: "position" is the word it is looking at and "last" the
+ last word it may read. On the way it notes whether the value is known
+ now, "constant", which stays true while the expression holds nothing but
+ numbers, characters and equ constants already worked out; the names it
+ waits on, "names"; and the first thing wrong with it, "problem". NASM's
+ precedence is kept: | binds loosest, then &, then <<, then + and -, then
+ *, / and %, and the unary -, + and ~ tightest. NASM's other operators are
+ outside the subset.)
+
+To 'a reader of the words' with a number called first and a number called last.
+  a map called reader is {"position": first, "last": last, "constant": true, "problem": "", "names": ""}.
+  Return a map, reader.
+
+(The value of the whole run of words the reader was made for.)
+To 'the value of the expression' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the bitwise or level' with words and 'what vas knows' and reader.
+  'finish the expression' with words and reader.
+  Return a number, 'expression value'.
+
+(Anything left over after an expression is a problem, named as a refused
+ operator where it is one.)
+To 'finish the expression' with a list called words and a map called reader.
+  a number called position is reader's "position".
+  a number called last is reader's "last".
+  If position is greater than last then, Return.
+  a text called word is element position of words.
+  a text called refusal is 'the refusal message of' of "the operator {word}".
+  If 'the word is a refused operator' with word then, 'the expression fails' with reader and refusal, Return.
+  'the expression fails' with reader and "an expression cannot go on with {word}".
+
+To 'the word is a refused operator' with a text called word.
+  If word is "^" or word is ">>" or word is "//" or word is "%%" or word is "!" then, Return a boolean, true.
+  If word is "<" or word is ">" or word is "<=" or word is ">=" or word is "<>" then, Return a boolean, true.
+  Return a boolean, word is "=" or word is "==" or word is "!=" or word is "&&" or word is "||" or word is "^^".
+
+(The first problem an expression has is the one reported.)
+To 'the expression fails' with a map called reader and a text called problem.
+  a text called 'problem so far' is reader's "problem".
+  If 'problem so far' is "" then, Set reader's "problem" to problem.
+
+(A name the expression waits on: its value is not known until the encoder
+ has placed every label.)
+To 'make the expression wait for the name' with a map called reader and a text called word.
+  Set reader's "constant" to false.
+  a text called names is reader's "names".
+  If names is "" then, Set reader's "names" to word, Return.
+  Set names to "{names} {word}".
+  Set reader's "names" to names.
+
+To 'step past the word' with a map called reader.
+  a number called position is reader's "position".
+  Set reader's "position" to position add 1.
+
+(Is the word the reader is looking at this one?)
+To 'the next word matches' with a list called words and a map called reader and a text called wanted.
+  a number called position is reader's "position".
+  a number called last is reader's "last".
+  If position is greater than last then, Return a boolean, false.
+  a text called word is element position of words.
+  Return a boolean, word is wanted.
+
+To 'the bitwise or level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the bitwise and level' with words and 'what vas knows' and reader.
+  While 'the next word matches' with words and reader and "|",
+    'step past the word' with reader,
+    set 'expression value' to 'expression value' bit-or {'the bitwise and level' with words and 'what vas knows' and reader}.
+  Return a number, 'expression value'.
+
+To 'the bitwise and level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the shift level' with words and 'what vas knows' and reader.
+  While 'the next word matches' with words and reader and "&",
+    'step past the word' with reader,
+    set 'expression value' to 'expression value' bit-and {'the shift level' with words and 'what vas knows' and reader}.
+  Return a number, 'expression value'.
+
+To 'the shift level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the sum level' with words and 'what vas knows' and reader.
+  While 'the next word matches' with words and reader and "<<",
+    'step past the word' with reader,
+    set 'expression value' to 'expression value' bit-shift-left {'the sum level' with words and 'what vas knows' and reader}.
+  Return a number, 'expression value'.
+
+To 'the sum level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the product level' with words and 'what vas knows' and reader.
+  a boolean called 'there is more to add' is true.
+  While 'there is more to add',
+    set 'there is more to add' to false,
+    if 'the next word matches' with words and reader and "+" then, 'step past the word' with reader, set 'expression value' to 'expression value' add {'the product level' with words and 'what vas knows' and reader}, set 'there is more to add' to true.
+    if 'the next word matches' with words and reader and "-" then, 'step past the word' with reader, set 'expression value' to 'expression value' subtract {'the product level' with words and 'what vas knows' and reader}, set 'there is more to add' to true..
+  Return a number, 'expression value'.
+
+To 'the product level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the unary level' with words and 'what vas knows' and reader.
+  a boolean called 'there is more to multiply' is true.
+  While 'there is more to multiply',
+    set 'there is more to multiply' to false,
+    if 'the next word matches' with words and reader and "*" then, 'step past the word' with reader, set 'expression value' to 'expression value' multiply {'the unary level' with words and 'what vas knows' and reader}, set 'there is more to multiply' to true.
+    if 'the next word matches' with words and reader and "/" then, 'step past the word' with reader, set 'expression value' to 'the quotient' with 'expression value' and {'the unary level' with words and 'what vas knows' and reader} and reader, set 'there is more to multiply' to true.
+    if 'the next word matches' with words and reader and "%" then, 'step past the word' with reader, set 'expression value' to 'the remainder' with 'expression value' and {'the unary level' with words and 'what vas knows' and reader} and reader, set 'there is more to multiply' to true..
+  Return a number, 'expression value'.
+
+(NASM's / and % treat both sides as unsigned. vas works them out only
+ where neither side is negative, where unsigned and signed agree, which
+ is every use the corpus makes of them. Until the expression is known,
+ its value is a stand-in, so there is nothing to divide.)
+To 'the quotient' with a number called dividend and a number called divisor and a map called reader.
+  If not 'the division can be worked out' with dividend and divisor and reader then, Return a number, 0.
+  Return a number, dividend divide divisor.
+
+To 'the remainder' with a number called dividend and a number called divisor and a map called reader.
+  If not 'the division can be worked out' with dividend and divisor and reader then, Return a number, 0.
+  Return a number, dividend modulo divisor.
+
+(Can / or % be worked out now? Not while the expression waits on a name;
+ and where it never can be, the expression fails, saying why.)
+To 'the division can be worked out' with a number called dividend and a number called divisor and a map called reader.
+  a boolean called 'it is constant' is reader's "constant".
+  If 'it is constant' is false then, Return a boolean, false.
+  If divisor is 0 then, 'the expression fails' with reader and "an expression divides by zero", Return a boolean, false.
+  If dividend is less than 0 or divisor is less than 0 then, 'the expression fails' with reader and "vas divides only numbers that are not negative, where NASM's unsigned division agrees with a signed one", Return a boolean, false.
+  Return a boolean, true.
+
+(The unary operators. ~ turns every bit over, which in two's complement
+ is the negative minus one.)
+To 'the unary level' with a list called words and a map called 'what vas knows' and a map called reader.
+  If 'the next word matches' with words and reader and "-" then, 'step past the word' with reader, Return a number, 0 subtract {'the unary level' with words and 'what vas knows' and reader}.
+  If 'the next word matches' with words and reader and "+" then, 'step past the word' with reader, Return a number, 'the unary level' with words and 'what vas knows' and reader.
+  If 'the next word matches' with words and reader and "~" then, 'step past the word' with reader, Return a number, {0 subtract {'the unary level' with words and 'what vas knows' and reader}} subtract 1.
+  Return a number, 'the primary level' with words and 'what vas knows' and reader.
+
+(A value on its own: an expression in parentheses, $, a number, a quoted
+ string read as a number, or a name. $$, the start of the section, and a
+ name written after a $ are NASM forms the corpus does not use.)
+To 'the primary level' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called position is reader's "position".
+  a number called last is reader's "last".
+  If position is greater than last then, 'the expression fails' with reader and "an expression ends before its value", Return a number, 0.
+  a text called word is element position of words.
+  'step past the word' with reader.
+  If word is "(" then, Return a number, 'the parenthesised value' with words and 'what vas knows' and reader.
+  If word is "$" then, 'make the expression wait for the name' with reader and word, Return a number, 0.
+  If word is "$$" then, 'the expression fails' with reader and {'the refusal message of' of "$$, the start of the section,"}, Return a number, 0.
+  a number called 'first character' is 'the first character of' of word.
+  If 'the byte is a digit' with 'first character' then, Return a number, 'the number the word spells' with word and reader.
+  If 'first character' is '"' or 'first character' is 'single quote mark' then, Return a number, 'the characters as a number' with word and reader.
+  If 'the byte begins a name' with 'first character' then, Return a number, 'the named value' with word and 'what vas knows' and reader.
+  If 'first character' is '$' then, 'the expression fails' with reader and {'the refusal message of' of "{word}, written with a dollar sign,"}, Return a number, 0.
+  a text called refusal is 'the refusal message of' of "the operator {word}".
+  If 'the word is a refused operator' with word then, 'the expression fails' with reader and refusal, Return a number, 0.
+  'the expression fails' with reader and "an expression cannot hold {word}".
+  Return a number, 0.
+
+To 'the parenthesised value' with a list called words and a map called 'what vas knows' and a map called reader.
+  a number called 'expression value' is 'the bitwise or level' with words and 'what vas knows' and reader.
+  If 'the next word matches' with words and reader and ")" then, 'step past the word' with reader, Return a number, 'expression value'.
+  'the expression fails' with reader and "a parenthesis in an expression is never closed".
+  Return a number, 'expression value'.
+
+(A number as NASM writes it and the corpus uses it: decimal, 0x
+ hexadecimal or 0o octal. Hexadecimal and octal are read bit by bit, so a
+ constant with its top bit set comes out as the negative number with the
+ same bits, which is what the encoder lays down. A floating-point number
+ stands only as a whole item of a data directive. NASM's other forms, 0b
+ binary and the suffix forms such as 10h and 777q, are outside the
+ subset.)
+To 'the number the word spells' with a text called word and a map called reader.
+  If 'the word spells a float' with word then, 'the expression fails' with reader and "the floating-point number {word} can stand only on its own as an item of a data directive", Return a number, 0.
+  a buffer called characters is "{word}".
+  a number called radix is 10.
+  a number called 'first digit' is 1.
+  If characters's size is greater than 'the length of a radix prefix' and byte 1 of characters is '0' then, set radix to 'the radix the byte marks' of {byte 2 of characters}.
+  If radix is not 10 then, set 'first digit' to 'the length of a radix prefix' add 1.
+  a number called 'number value' is 0.
+  a number called digit is 0.
+  a number called 'bits per digit' is 'the bits per digit of' of radix.
+  a boolean called 'it is readable' is true.
+  For each position from 'first digit' to characters's size,
+    set digit to 'the digit value of' of {byte position of characters},
+    if digit is less than 0 or digit is greater than or equal to radix then, set 'it is readable' to false.
+    if radix is 10 then, set 'number value' to {'number value' multiply 10} add digit.
+    if radix is not 10 then, set 'number value' to {'number value' bit-shift-left 'bits per digit'} bit-or digit..
+  a text called refusal is 'the refusal message of' of "the number form {word}".
+  If 'it is readable' is false then, 'the expression fails' with reader and refusal, Return a number, 0.
+  Return a number, 'number value'.
+
+(The radix a letter after a leading 0 marks, or 10 for none.)
+To 'the radix the byte marks' of a number called character.
+  If character is 'x' or character is 'X' then, Return a number, 16.
+  If character is 'o' or character is 'O' then, Return a number, 8.
+  Return a number, 10.
+
+To 'the bits per digit of' of a number called radix.
+  If radix is 16 then, Return a number, 4.
+  Return a number, 3.
+
+(What a digit is worth, letters counting on from 10, or -1 for a byte that
+ is no digit in any radix.)
+To 'the digit value of' of a number called character.
+  If 'the byte is a digit' with character then, Return a number, character subtract '0'.
+  If character is greater than or equal to 'a' and character is less than or equal to 'z' then, Return a number, {character subtract 'a'} add 10.
+  If character is greater than or equal to 'A' and character is less than or equal to 'Z' then, Return a number, {character subtract 'A'} add 10.
+  Return a number, -1.
+
+(A quoted string in an expression is a number made of its bytes, the
+ first byte lowest, as NASM reads a character constant such as '0'.)
+To 'the characters as a number' with a text called word and a map called reader.
+  a buffer called characters is "{word}".
+  (The bytes of the constant lie between its quote marks, the first at
+   position 2 and the closing mark at the end)
+  a number called closing is characters's size.
+  a number called 'first inside' is 2.
+  If closing is less than 'first inside' or byte closing of characters is not byte 1 of characters then, 'the expression fails' with reader and "a quoted string in an expression is never closed", Return a number, 0.
+  If closing subtract 'first inside' is greater than 'most bytes in a character constant' then, 'the expression fails' with reader and "a quoted string of more than eight bytes cannot be a number", Return a number, 0.
+  a number called 'number value' is 0.
+  For each position from 'first inside' to {closing subtract 1},
+    set 'number value' to 'number value' bit-or {{byte position of characters} bit-shift-left {'bits in a byte' multiply {position subtract 'first inside'}}}.
+  Return a number, 'number value'.
+
+(A name in an expression. An equ constant whose value is already known
+ stands for that value; any other name, a label or a constant still to be
+ worked out, leaves the expression to the encoder. A register cannot
+ stand in an expression.)
+To 'the named value' with a text called word and a map called 'what vas knows' and a map called reader.
+  a number called kind is 'what vas knows''s "word {word}".
+  a text called class is 'the register class of' of kind.
+  If class is not "" then, 'the expression fails' with reader and "the register {word} cannot be part of an expression", Return a number, 0.
+  If kind is 'refused register kind' then, 'the expression fails' with reader and {'the refusal message of' of "the register {word}"}, Return a number, 0.
+  a text called scope is 'what vas knows''s "scope".
+  a text called 'full name' is 'the scoped name' with word and scope.
+  a boolean called 'its value is known' is 'what vas knows''s "constant known {full name}".
+  If 'its value is known' then, Return a number, 'what vas knows''s "constant {full name}".
+  'make the expression wait for the name' with reader and word.
+  Return a number, 0.
+
+(--- The vocabulary --------------------------------------------------------)
+
+(The fixed words, each with a number for its kind, so that one look in
+ 'what vas knows' says what a word is: every mnemonic and register the
+ compiler's output and coreasm use, and the NASM words vas refuses by
+ name. The words are in lower case, as the compiler and coreasm write
+ them; a capital spelling is refused as an unknown word. A key put
+ together as text is a new text, which Vox keeps until the program ends,
+ so one look answers every question asked of a word. A register also has
+ its number,
+ "register number WORD". rep is not here: it is a prefix, read with the
+ string instruction after it.)
+To 'learn the vocabulary' with a map called 'what vas knows'.
+  a list called mnemonics is ["adc", "add", "addsd", "and", "andpd", "btr", "call", "clc", "cld", "cmovg", "cmovge", "cmovl", "cmovz", "cmp", "cqo", "cvtsi2sd", "cvttsd2si", "dec", "div", "divsd", "fdiv", "fild", "fldcw", "fmul", "fnstcw", "fstp", "idiv", "imul", "inc", "ja", "jae", "jb", "jbe", "je", "jg", "jge", "jl", "jle", "jmp", "jnc", "jne", "jns", "jnz", "jo", "js", "jz", "lea", "leave", "mov", "movq", "movsd", "movzx", "mul", "mulsd", "neg", "nop", "not", "or", "pop", "push", "ret", "roundsd", "sar", "seta", "setae", "setb", "setbe", "sete", "setg", "setge", "setl", "setle", "setne", "setnp", "setnz", "setp", "setz", "shl", "shr", "stc", "std", "sub", "subsd", "syscall", "test", "ucomisd", "xchg", "xor", "xorpd"].
+  'mark the words' with mnemonics and 'mnemonic kind' and 'what vas knows'.
+  a list called 'quadword registers' is ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"].
+  a list called 'doubleword registers' is ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"].
+  a list called 'word registers' is ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"].
+  a list called 'byte registers' is ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"].
+  a list called 'vector registers' is ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"].
+  'learn the registers' with 'quadword registers' and 'quadword register kind' and 'what vas knows'.
+  'learn the registers' with 'doubleword registers' and 'doubleword register kind' and 'what vas knows'.
+  'learn the registers' with 'word registers' and 'word register kind' and 'what vas knows'.
+  'learn the registers' with 'byte registers' and 'byte register kind' and 'what vas knows'.
+  'learn the registers' with 'vector registers' and 'vector register kind' and 'what vas knows'.
+  a list called 'refused registers' is ["ah", "ch", "dh", "bh", "cs", "ds", "es", "fs", "gs", "ss", "st0", "st1", "st2", "st3", "st4", "st5", "st6", "st7", "mm0", "mm1", "mm2", "mm3", "mm4", "mm5", "mm6", "mm7", "ymm0", "ymm1", "ymm2", "ymm3", "ymm4", "ymm5", "ymm6", "ymm7", "ymm8", "ymm9", "ymm10", "ymm11", "ymm12", "ymm13", "ymm14", "ymm15"].
+  'mark the words' with 'refused registers' and 'refused register kind' and 'what vas knows'.
+  a list called 'refused directives' is ["incbin", "struc", "endstruc", "istruc", "iend", "at", "bits", "use16", "use32", "use64", "absolute", "common", "static", "org", "cpu", "float", "warning", "list", "map", "segment", "alignb", "sectalign", "resw", "rest", "reso", "resy", "resz", "dw", "dd", "dt", "do", "dy", "dz"].
+  'mark the words' with 'refused directives' and 'refused directive kind' and 'what vas knows'.
+  a list called 'refused prefixes' is ["lock", "repe", "repz", "repne", "repnz"].
+  'mark the words' with 'refused prefixes' and 'refused prefix kind' and 'what vas knows'.
+
+(A family of registers, in encoding order, so that each one's place less
+ one is its register number.)
+To 'learn the registers' with a list called names and a number called kind and a map called 'what vas knows'.
+  'mark the words' with names and kind and 'what vas knows'.
+  For each position from 1 to names's length,
+    a text called register is element position of names,
+    Set 'what vas knows''s "register number {register}" to position subtract 1.
+
+To 'mark the words' with a list called names and a number called kind and a map called 'what vas knows'.
+  For each position from 1 to names's length,
+    a text called word is element position of names,
+    Set 'what vas knows''s "word {word}" to kind.
+
+(The register class a word's kind stands for, or the empty text for a word
+ that is no register vas takes.)
+To 'the register class of' of a number called kind.
+  If kind is 'quadword register kind' then, Return a text, "r64".
+  If kind is 'doubleword register kind' then, Return a text, "r32".
+  If kind is 'word register kind' then, Return a text, "r16".
+  If kind is 'byte register kind' then, Return a text, "r8".
+  If kind is 'vector register kind' then, Return a text, "xmm".
+  Return a text, "".
+
+(--- The entries -----------------------------------------------------------)
+
+(Read a source file through the front end: every file it includes, every
+ macro expanded, every statement parsed into a record on the statements
+ list, in order. 'what vas knows' is left holding what the front end
+ learnt, among it the globals, the constants it could work out, and
+ whether the stack is to be executable. The messages go into the
+ diagnostics buffer. The definitions are single-line macros to define
+ first, words separated by spaces, each NAME or NAME=VALUE. Answers how
+ many errors there were.)
+To 'read the source' with a text called 'source path' and a text called 'coreasm directory' and a text called definitions and a map called 'what vas knows' and a list called statements and a buffer called diagnostics.
+  a text called 'coreasm home' is 'the path without a trailing slash' with 'coreasm directory'.
+  Set 'what vas knows''s "errors" to 0.
+  Set 'what vas knows''s "a shared build was refused" to false.
+  Set 'what vas knows''s "coreasm directory" to 'coreasm home'.
+  Set 'what vas knows''s "coreasm parent" to 'the directory of' of 'coreasm home'.
+  Set 'what vas knows''s "includes" to 0.
+  Set 'what vas knows''s "expansions so far" to 0.
+  Set 'what vas knows''s "current expansion" to 0.
+  Set 'what vas knows''s "depth" to 0.
+  Set 'what vas knows''s "section" to ".text".
+  Set 'what vas knows''s "scope" to "".
+  Set 'what vas knows''s "stack is not executable" to false.
+  Set 'what vas knows''s "default relative" to false.
+  Set 'what vas knows''s "defined names" to [].
+  'learn the vocabulary' with 'what vas knows'.
+  'define the given names' with definitions and 'what vas knows'.
+  a map called macros is {}.
+  'include the file' with 'source path' and 'source path' and 0 and 'what vas knows' and macros and statements and diagnostics.
+  a number called errors is 'what vas knows''s "errors".
+  Return a number, errors.
+
+(Define each of the given names, as nasm's -D does.)
+To 'define the given names' with a text called definitions and a map called 'what vas knows'.
+  a buffer called characters is "{definitions} ".
+  Create a buffer called word.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if character is not ' ' then, 'append the byte' with character and word.
+    if character is ' ' and word's size is greater than 0 then, 'define the given name' with word and 'what vas knows', clear word..
+
+To 'define the given name' with a buffer called word and a map called 'what vas knows'.
+  a number called 'equals sign' is 0.
+  For each position from 1 to word's size,
+    if 'equals sign' is 0 and byte position of word is '=' then, set 'equals sign' to position..
+  a text called 'defined name' is "{word}".
+  a text called body is "".
+  If 'equals sign' is greater than 0 then, set 'defined name' to 'the bytes as text' with word and 1 and {'equals sign' subtract 1}, set body to 'the bytes as text' with word and {'equals sign' add 1} and word's size.
+  'note the defined name' with 'defined name' and 'what vas knows'.
+  Set 'what vas knows''s "define {defined name}" to 'definition without parameters'.
+  Set 'what vas knows''s "definition {defined name}" to body.
+  Set 'what vas knows''s "parameters {defined name}" to "".
+
+(The expansion as text: one statement to a line, a label on a line of its
+ own, each written as the source wrote it once every macro was expanded.
+ The statements are the texts 'keep the record' keeps when only the text
+ is wanted. Each is appended straight from the list, as in 'append every
+ token'.)
+To 'write the expansion' with a list called statements and a buffer called expansion.
+  For each position from 1 to statements's length,
+    append "{element position of statements}\n" to expansion.
+
+(The path-based entry, with names defined before the source is read.
+ Writes the expansion to the output path and answers 0, or answers the
+ number of errors and writes the output path's diagnostics file instead.)
+To 'expand file with definitions' of a text called 'source path' and a text called 'coreasm directory' and a text called 'output path' and a text called definitions.
+  a map called 'what vas knows' is {}.
+  Set 'what vas knows''s "only the text is wanted" to true.
+  a list called statements is [].
+  Create a buffer called diagnostics.
+  a number called errors is 'read the source' with 'source path' and 'coreasm directory' and definitions and 'what vas knows' and statements and diagnostics.
+  a text called 'diagnostics path' is "".
+  Set 'diagnostics path' to "{output path}.diagnostics".
+  If errors is greater than 0 then, 'keep the diagnostics' with 'diagnostics path' and diagnostics, Return a number, errors.
+  Create a buffer called expansion.
+  'write the expansion' with statements and expansion.
+  If not 'write the file' with 'output path' and expansion then, append "{output path}:0: cannot write the expansion to this file\n" to diagnostics, 'keep the diagnostics' with 'diagnostics path' and diagnostics, Return a number, 1.
+  If 'diagnostics path' is available then, Delete the file 'diagnostics path'.
+  Return a number, 0.
+
+(The path-based entry, with no names defined beforehand.)
+To 'expand file' of a text called 'source path' and a text called 'coreasm directory' and a text called 'output path'.
+  Return a number, 'expand file with definitions' of 'source path' and 'coreasm directory' and 'output path' and "".
+
+(The messages of the last call that wrote to this output path, or the
+ empty text when it left none.)
+To 'assembler diagnostics' of a text called 'output path'.
+  Create a buffer called messages.
+  (A call that succeeded leaves no diagnostics file, and a file that cannot
+   be read leaves the buffer empty, which is the answer either way)
+  'read the whole file' with "{output path}.diagnostics" and messages.
+  a text called 'message text' is "{messages}".
+  Return a text, 'message text'.
+
+(The messages written to the diagnostics file. A message that cannot be
+ kept has nowhere else to go, so a failure here is not reported again.)
+To 'keep the diagnostics' with a text called path and a buffer called diagnostics.
+  'write the file' with path and diagnostics.

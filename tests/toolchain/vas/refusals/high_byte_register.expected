@@ -1,0 +1,1 @@
+high_byte_register.asm:3: the register ah is outside the NASM subset vas accepts

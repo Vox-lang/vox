@@ -1,0 +1,9 @@
+# The corpus files vas refuses whole, because each holds a construct only a
+# shared build writes, with the message each must be refused with. This is
+# the one list: expand_check.sh checks these refusals, and
+# structure_check.py leaves these files out. A file and its message are
+# separated by a tab.
+examples/mathkit_consumer.asm	extern is only used by shared builds
+vox-libs/date.asm	the section .fini_array is only used by shared builds
+vox-libs/json.asm	the section .fini_array is only used by shared builds
+vox-libs/textkit.asm	the section .fini_array is only used by shared builds

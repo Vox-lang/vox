@@ -1,0 +1,1 @@
+rep_other.asm:3: rep before lodsb is outside the NASM subset vas accepts
