@@ -305,26 +305,22 @@ _start:
     mov rax, 256
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-24], rax  ; buffer struct pointer
-    mov rax, [rbp-24]
-    mov [rel gvar_0], rax
+    mov [rel gvar_0], rax  ; buffer answer
     PRINT_STR str_23, str_23_len
     PRINT_NEWLINE
     mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_22  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local answer
+    mov rax, [rel gvar_0]  ; global mirror answer
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-24], rsi  ; store new pointer for answer
-    mov rax, [rbp-24]
-    mov [rel gvar_0], rax
+    mov [rel gvar_0], rsi  ; store new pointer for answer
     jmp .readline_done_23
 .skip_fd_22:
     SET_LAST_ERROR 1
 .readline_done_23:
-    mov rax, [rbp-24]
+    mov rax, [rel gvar_0]
     ; Buffer to text (independent copy)
     push rbx
     push r12
@@ -362,18 +358,18 @@ _start:
     push rdi
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax
-    mov rdi, [rbp-32]
+    mov [rbp-24], rax
+    mov rdi, [rbp-24]
     lea rsi, [rel str_24]
     mov rdx, str_24_len
     call _buffer_append_bytes
-    mov [rbp-32], rax
+    mov [rbp-24], rax
     mov rax, [rel gvar_10]
-    mov rdi, [rbp-32]
+    mov rdi, [rbp-24]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-32], rax
-    mov rax, [rbp-32]
+    mov [rbp-24], rax
+    mov rax, [rbp-24]
     BUFFER_DATA_ADDR rax  ; buffer data area
     pop rdi
     FILE_WRITE_STR rdi, rax

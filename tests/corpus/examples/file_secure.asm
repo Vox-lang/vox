@@ -47,21 +47,19 @@ global _start
 _start:
     push rbp
     mov rbp, rsp
-    sub rsp, 32
+    sub rsp, 16
 
     PRINT_STR str_0, str_0_len
     PRINT_NEWLINE
     PRINT_STR str_1, str_1_len
     PRINT_NEWLINE
     call _alloc_buffer
-    mov [rbp-8], rax  ; buffer struct pointer
-    mov rax, [rbp-8]
-    mov [rel gvar_0], rax
+    mov [rel gvar_0], rax  ; buffer contents
     PRINT_STR str_2, str_2_len
     PRINT_NEWLINE
     lea rdi, [rel str_3]
     FILE_OPEN_WRITE rdi
-    mov [rbp-16], rax  ; file descriptor
+    mov [rbp-8], rax  ; file descriptor
     test rax, rax
     jns .file_ok_0  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -72,9 +70,9 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_1:
-    mov rax, [rbp-16]
+    mov rax, [rbp-8]
     mov [rel gvar_1], rax
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_2  ; skip if invalid fd
     FILE_WRITE_STR rdi, str_4
@@ -82,7 +80,7 @@ _start:
 .skip_fd_2:
     SET_LAST_ERROR 1
 .write_done_3:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_4  ; skip if invalid fd
     FILE_WRITE_NEWLINE rdi
@@ -90,7 +88,7 @@ _start:
 .skip_fd_4:
     SET_LAST_ERROR 1
 .write_newline_done_5:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_6  ; skip if invalid fd
     FILE_WRITE_STR rdi, str_5
@@ -98,7 +96,7 @@ _start:
 .skip_fd_6:
     SET_LAST_ERROR 1
 .write_done_7:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_8  ; skip if invalid fd
     FILE_WRITE_NEWLINE rdi
@@ -106,7 +104,7 @@ _start:
 .skip_fd_8:
     SET_LAST_ERROR 1
 .write_newline_done_9:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_10  ; skip if invalid fd
     FILE_WRITE_STR rdi, str_6
@@ -114,18 +112,18 @@ _start:
 .skip_fd_10:
     SET_LAST_ERROR 1
 .write_done_11:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_12  ; skip if invalid fd
     call _unregister_fd  ; remove from tracking
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     FILE_CLOSE rdi
 .skip_fd_12:
     PRINT_STR str_7, str_7_len
     PRINT_NEWLINE
     lea rdi, [rel str_8]
     FILE_OPEN_READ rdi
-    mov [rbp-24], rax  ; file descriptor
+    mov [rbp-16], rax  ; file descriptor
     test rax, rax
     jns .file_ok_13  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -136,32 +134,30 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_14:
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     mov [rel gvar_2], rax
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_15  ; skip if invalid fd
-    mov rax, [rbp-8]  ; local contents
+    mov rax, [rel gvar_0]  ; global mirror contents
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-8], rsi  ; store new pointer for contents
-    mov rax, [rbp-8]
-    mov [rel gvar_0], rax
+    mov [rel gvar_0], rsi  ; store new pointer for contents
     jmp .read_done_16
 .skip_fd_15:
     SET_LAST_ERROR 1
 .read_done_16:
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_17  ; skip if invalid fd
     call _unregister_fd  ; remove from tracking
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-16]
     FILE_CLOSE rdi
 .skip_fd_17:
     PRINT_STR str_9, str_9_len
     PRINT_NEWLINE
-    mov rax, [rbp-8]
+    mov rax, [rel gvar_0]
     mov rdi, rax
     PRINT_BUF rdi
     PRINT_NEWLINE

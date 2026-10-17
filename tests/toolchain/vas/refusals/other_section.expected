@@ -1,0 +1,1 @@
+other_section.asm:2: the section .tls is outside the NASM subset vas accepts

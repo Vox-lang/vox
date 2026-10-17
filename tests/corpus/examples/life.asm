@@ -49,7 +49,7 @@ global _start
 _start:
     push rbp
     mov rbp, rsp
-    sub rsp, 96
+    sub rsp, 80
 
     mov rax, 40
     mov [rel gvar_6], rax  ; global store width
@@ -60,15 +60,11 @@ _start:
     mov rax, 800
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-8], rax  ; buffer struct pointer
-    mov rax, [rbp-8]
-    mov [rel gvar_2], rax
+    mov [rel gvar_2], rax  ; buffer grid
     mov rax, 800
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-16], rax  ; buffer struct pointer
-    mov rax, [rbp-16]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rax  ; buffer next grid
     mov rax, 20
     push rax
     mov rax, 9
@@ -142,33 +138,33 @@ _start:
     PRINT_STR str_6, str_6_len
     PRINT_NEWLINE
     ; Timer declaration: clock
-    lea rax, [rbp - 72]
+    lea rax, [rbp - 56]
     TIMER_INIT rax
     ; Start timer: clock
-    lea rax, [rbp - 72]
+    lea rax, [rbp - 56]
     TIMER_START rax
     mov rax, 1
-    mov [rbp-80], rax
+    mov [rbp-64], rax
     mov rax, [rel gvar_1]
     inc rax
-    mov [rbp-88], rax
+    mov [rbp-72], rax
 .for_start_37:
-    mov rax, [rbp-80]
-    cmp rax, [rbp-88]
+    mov rax, [rbp-64]
+    cmp rax, [rbp-72]
     jge .for_end_39
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
     push rax
     pop rdi
     call run_generation
 .for_continue_38:
-    inc qword [rbp-80]
+    inc qword [rbp-64]
     jmp .for_start_37
 .for_end_39:
     ; Stop timer: clock
-    lea rax, [rbp - 72]
+    lea rax, [rbp - 56]
     TIMER_STOP rax
     ; Duration in milliseconds
-    lea rax, [rbp - 72]
+    lea rax, [rbp - 56]
     TIMER_DURATION_MILLISECONDS rax
     mov [rel gvar_5], rax  ; global store time taken
     PRINT_STR str_7, str_7_len
@@ -221,7 +217,7 @@ wrap:
     INT_ADD
     pop rbx
     INT_ADD
-    mov [rbp-32], rax  ; store cells past the first
+    mov [rbp-32], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -284,9 +280,6 @@ bring_to_life:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rel gvar_2]  ; global mirror grid
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
@@ -294,16 +287,23 @@ bring_to_life:
     pop rdi
     pop rsi
     call cell_index
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 1
+    push rax  ; value
+    mov rax, [rel gvar_2]  ; global mirror grid
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_1  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_0  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_1  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
@@ -311,18 +311,12 @@ bring_to_life:
     mov rbx, rax  ; new buffer pointer
     mov [rel gvar_2], rax  ; store new pointer for grid
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_0  ; grown buffer now has space
 .bset_err_1:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_2
 .bset_ok_0:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 1
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_3  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -347,8 +341,6 @@ the_state_at:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
@@ -356,8 +348,10 @@ the_state_at:
     pop rdi
     pop rsi
     call cell_index
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_5  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -392,11 +386,11 @@ alive_neighbors:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     xor rax, rax
-    mov [rbp-72], rax  ; store neighbor column
+    mov [rbp-72], rax
     xor rax, rax
-    mov [rbp-48], rax  ; store neighbor row
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-24], rax  ; store tally
+    mov [rbp-24], rax
     mov rax, 1
     INT_NEG
     mov [rbp-32], rax
@@ -417,7 +411,7 @@ alive_neighbors:
     pop rsi
     pop rdx
     call wrap
-    mov [rbp-48], rax  ; store neighbor row
+    mov [rbp-48], rax
     mov rax, 1
     INT_NEG
     mov [rbp-56], rax
@@ -438,7 +432,7 @@ alive_neighbors:
     pop rsi
     pop rdx
     call wrap
-    mov [rbp-72], rax  ; store neighbor column
+    mov [rbp-72], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-72]
     push rax
@@ -486,7 +480,7 @@ print_row:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     lea rax, [rel str_2]  ; empty text
-    mov [rbp-40], rax  ; store text mark
+    mov [rbp-40], rax
     mov rax, 64
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
@@ -501,7 +495,7 @@ print_row:
     cmp rax, [rbp-32]
     jge .for_end_15
     lea rax, [rel str_0]
-    mov [rbp-40], rax  ; store mark
+    mov [rbp-40], rax
     mov rax, 1
     push rax
     mov rax, [rbp-24]
@@ -554,7 +548,7 @@ step_cell:
     pop rdi
     pop rsi
     call alive_neighbors
-    mov [rbp-24], rax  ; store neighbors
+    mov [rbp-24], rax
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
@@ -562,9 +556,9 @@ step_cell:
     pop rdi
     pop rsi
     call the_state_at
-    mov [rbp-32], rax  ; store state
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-40], rax  ; store next state
+    mov [rbp-40], rax
     mov rax, 1
     push rax
     mov rax, [rbp-32]
@@ -617,9 +611,6 @@ step_cell:
 .else_23:
 .if_end_22:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rel gvar_4]  ; global mirror next grid
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
@@ -627,16 +618,23 @@ step_cell:
     pop rdi
     pop rsi
     call cell_index
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-40]
+    push rax  ; value
+    mov rax, [rel gvar_4]  ; global mirror next grid
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_25  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_24  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_25  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
@@ -644,18 +642,12 @@ step_cell:
     mov rbx, rax  ; new buffer pointer
     mov [rel gvar_4], rax  ; store new pointer for next grid
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_24  ; grown buffer now has space
 .bset_err_25:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_26
 .bset_ok_24:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-40]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_27  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte

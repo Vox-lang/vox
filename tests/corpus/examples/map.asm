@@ -134,11 +134,11 @@ _start:
     pop rax  ; final map pointer in rax
     mov [rel gvar_5], rax  ; global store map person
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
-    jnz .list_mmap_ok_87
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
+    jnz .list_mmap_ok_88
     EXIT 1
-.list_mmap_ok_87:
+.list_mmap_ok_88:
     push rax  ; save list pointer
     mov qword [rax], 8  ; capacity
     mov qword [rax + 8], 0  ; length
@@ -185,11 +185,11 @@ _start:
     PRINT_NEWLINE
     mov qword [rbp-8], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rel gvar_5]
-    push rax  ; save map pointer
     lea rax, [rel str_7]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_5]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_6
@@ -294,24 +294,27 @@ _start:
     PRINT_STR str_13, str_13_len
     PRINT_NEWLINE
     ; Set map's key to value (insert/replace)
-    mov rax, [rel gvar_5]
-    push rax  ; save map pointer
     lea rax, [rel str_14]  ; literal map key
     push rax  ; save key pointer
     mov rax, 37
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rel gvar_5]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
     mov [rel gvar_5], rax  ; store new pointer for person
     mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rel gvar_5]
-    push rax  ; save map pointer
     lea rax, [rel str_15]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_5]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_21
@@ -498,8 +501,8 @@ _start:
     lea rax, [rel str_22]  ; literal map key
     push rax  ; save key pointer
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_49
     EXIT 1
 .list_mmap_ok_49:
@@ -563,11 +566,11 @@ _start:
     PRINT_NEWLINE
     mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rel gvar_4]
-    push rax  ; save map pointer
     lea rax, [rel str_28]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_4]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_50
@@ -591,8 +594,8 @@ _start:
     je .dyn_cast_collection_done_53
     SET_LAST_ERROR 1
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_54
     EXIT 1
 .list_mmap_ok_54:
@@ -606,8 +609,8 @@ _start:
     test rax, rax
     jnz .miss_empty_done_55
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_56
     EXIT 1
 .list_mmap_ok_56:
@@ -630,11 +633,11 @@ _start:
     PRINT_NEWLINE
     mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rel gvar_4]
-    push rax  ; save map pointer
     lea rax, [rel str_30]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_4]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_58
@@ -680,11 +683,11 @@ _start:
     mov [rel gvar_2], rax  ; global store meta
     mov qword [rbp-128], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rel gvar_2]
-    push rax  ; save map pointer
     lea rax, [rel str_31]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_2]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_64
@@ -760,6 +763,11 @@ _start:
     PRINT_STR str_34, str_34_len
     PRINT_NEWLINE
     mov rax, [rel gvar_5]
+    test rax, rax
+    jz .naming_copy_done_77
+    mov rdi, rax  ; naming copies: person gives a copy of its map
+    call _copy_map
+.naming_copy_done_77:
     mov r11, 5  ; value tag (static)
     push r11  ; value param tag word
     push rax
@@ -767,64 +775,64 @@ _start:
     pop rsi
     call print_the_record
     ; Map key access (lookup)
-    mov rax, [rel gvar_5]
-    push rax  ; save map pointer
     lea rax, [rel str_35]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rel gvar_5]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_77
+    je .copyin_is_list_78
     cmp r11d, 5
-    je .copyin_is_map_78
-    jmp .copyin_done_79
-.copyin_is_list_77:
+    je .copyin_is_map_79
+    jmp .copyin_done_80
+.copyin_is_list_78:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_79
-.copyin_is_map_78:
+    jmp .copyin_done_80
+.copyin_is_map_79:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_79:
+.copyin_done_80:
     mov rdi, rax
     cmp r11, 1  ; string tag?
-    je .mixp_str_80
+    je .mixp_str_81
     cmp r11, 2  ; float tag?
-    je .mixp_flt_81
+    je .mixp_flt_82
     cmp r11, 4  ; list tag?
-    je .mixp_list_82
+    je .mixp_list_83
     cmp r11, 5  ; map tag?
-    je .mixp_map_83
+    je .mixp_map_84
     cmp r11, 6  ; nothing tag?
-    je .mixp_nothing_84
+    je .mixp_nothing_85
     PRINT_INT rdi
-    jmp .mixp_done_85
-.mixp_str_80:
+    jmp .mixp_done_86
+.mixp_str_81:
     PRINT_CSTR rdi
-    jmp .mixp_done_85
-.mixp_flt_81:
+    jmp .mixp_done_86
+.mixp_flt_82:
     movq xmm0, rdi
     PRINT_FLOAT
-    jmp .mixp_done_85
-.mixp_list_82:
+    jmp .mixp_done_86
+.mixp_list_83:
     call _list_print  ; rdi = child list pointer
-    jmp .mixp_done_85
-.mixp_map_83:
+    jmp .mixp_done_86
+.mixp_map_84:
     call _map_print  ; rdi = child map pointer
-    jmp .mixp_done_85
-.mixp_nothing_84:
+    jmp .mixp_done_86
+.mixp_nothing_85:
     PRINT_STR str_36, str_36_len
-.mixp_done_85:
+.mixp_done_86:
     PRINT_NEWLINE
     mov rax, [rel _last_error]
     test rax, rax
-    jz .skip_error_86  ; skip if no error
+    jz .skip_error_87  ; skip if no error
     PRINT_STR str_37, str_37_len
     PRINT_NEWLINE
     CLEAR_LAST_ERROR
-.skip_error_86:
+.skip_error_87:
 
     ; Cleanup all resources before exit
     call _cleanup_all

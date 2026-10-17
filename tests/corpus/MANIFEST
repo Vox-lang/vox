@@ -1,5 +1,5 @@
 # The assembly corpus, written by tests/toolchain/corpus.sh. Do not edit by hand.
-# compiler: vox v0.4.16 By Josjuar Lister 2026
+# compiler: vox v0.4.16 By Josjuar Lister 2026 (commit cb407f8)
 #
 # Columns: the .asm file (relative to tests/corpus), how it is built
 # (program: nasm -f elf64, then ld; library: nasm -f elf64 -DPIC, then
@@ -47,11 +47,9 @@ examples/supervisor.asm	program	examples/supervisor.vox	-
 examples/time.asm	program	examples/time.vox	-
 examples/walker.asm	program	examples/walker.vox	-
 vox-libs/date.asm	library	date/date.vox	-
+vox-libs/json.asm	library	json/json.vox	-
 vox-libs/process.asm	library	process/process.vox	-
 vox-libs/textkit.asm	library	textkit/textkit.vox	-
 voxos/init.asm	program	system/init.vox	-
 voxos/initramfs.asm	program	system/initramfs.vox	-
 voxos/sh.asm	program	system/sh.vox	-
-#
-# Sources that did not compile, with the compiler's message:
-# skipped: vox-libs/json/json.vox	error: cannot cast "malformed" to a number: it does not begin with a digit a number is written as it would be in Vox source, after an optional '-': digits with an optional fractional part, like "42" or "2.5", or a whole number after 0x, 0b or 0o, like "0x1F" --> json/json.vox:108:53

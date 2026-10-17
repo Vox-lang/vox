@@ -184,7 +184,7 @@ crashed:
     mov rax, [rbp-8]
     pop rbx
     and rax, rbx
-    mov [rbp-16], rax  ; store terminating signal
+    mov [rbp-16], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]
@@ -209,7 +209,7 @@ exited_normally:
     mov rax, [rbp-8]
     pop rbx
     and rax, rbx
-    mov [rbp-16], rax  ; store terminating signal
+    mov [rbp-16], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]
@@ -229,11 +229,11 @@ supervise:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     xor rax, rax
-    mov [rbp-104], rax  ; store status
+    mov [rbp-104], rax
     xor rax, rax
-    mov [rbp-96], rax  ; store the milliseconds waited
+    mov [rbp-96], rax
     xor rax, rax
-    mov [rbp-88], rax  ; store the reaped child
+    mov [rbp-88], rax
     ; Timer declaration: clock
     lea rax, [rbp - 64]
     TIMER_INIT rax
@@ -241,9 +241,9 @@ supervise:
     lea rax, [rbp - 64]
     TIMER_START rax
     mov rax, 1
-    mov [rbp-72], rax  ; store the child is still running
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store the child ran out of time
+    mov [rbp-80], rax
 .while_start_0:
     mov rax, [rbp-72]
     test rax, rax
@@ -260,7 +260,7 @@ supervise:
     SET_LAST_ERROR 22  ; EINVAL: nothing reaped
     mov rax, -22
 .reap_done_3:
-    mov [rbp-88], rax  ; store the reaped child
+    mov [rbp-88], rax
     mov rax, [rbp-8]
     push rax
     mov rax, [rbp-88]
@@ -268,7 +268,7 @@ supervise:
     cmp rax, rbx
     jne .else_5
     mov rax, 0
-    mov [rbp-72], rax  ; store the child is still running
+    mov [rbp-72], rax
     jmp .if_end_4
 .else_5:
 .if_end_4:
@@ -278,7 +278,7 @@ supervise:
     ; Duration in milliseconds
     lea rax, [rbp - 64]
     TIMER_ELAPSED_MILLISECONDS rax
-    mov [rbp-96], rax  ; store the milliseconds waited
+    mov [rbp-96], rax
     mov rax, [rel gvar_0]
     push rax
     mov rax, [rbp-96]
@@ -312,11 +312,11 @@ supervise:
     SET_LAST_ERROR 22  ; EINVAL: nothing reaped
     mov rax, -22
 .reap_done_13:
-    mov [rbp-88], rax  ; store the reaped child
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store the child is still running
+    mov [rbp-72], rax
     mov rax, 1
-    mov [rbp-80], rax  ; store the child ran out of time
+    mov [rbp-80], rax
     jmp .if_end_8
 .else_9:
 .if_end_8:
@@ -337,7 +337,7 @@ supervise:
 .if_end_6:
     ; the reaped status - raw wait4 status word (plan 311)
     mov rax, [rel _reaped_status]
-    mov [rbp-104], rax  ; store status
+    mov [rbp-104], rax
     jmp .while_start_0
 .while_end_1:
     mov rax, [rbp-80]

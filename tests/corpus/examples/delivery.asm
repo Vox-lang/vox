@@ -452,7 +452,7 @@ the_blocks_driven:
     mov rax, [rbp-16]  ; drive's end's street
     pop rbx
     INT_SUB
-    mov [rbp-40], rax  ; store streets crossed
+    mov [rbp-40], rax
     mov rax, 0
     push rax
     mov rax, [rbp-40]
@@ -465,7 +465,7 @@ the_blocks_driven:
     mov rax, 0
     pop rbx
     INT_SUB
-    mov [rbp-40], rax  ; store streets crossed
+    mov [rbp-40], rax
     jmp .if_end_0
 .else_1:
 .if_end_0:
@@ -475,7 +475,7 @@ the_blocks_driven:
     mov rax, [rbp-8]  ; drive's end's avenue
     pop rbx
     INT_SUB
-    mov [rbp-48], rax  ; store avenues crossed
+    mov [rbp-48], rax
     mov rax, 0
     push rax
     mov rax, [rbp-48]
@@ -488,7 +488,7 @@ the_blocks_driven:
     mov rax, 0
     pop rbx
     INT_SUB
-    mov [rbp-48], rax  ; store avenues crossed
+    mov [rbp-48], rax
     jmp .if_end_2
 .else_3:
 .if_end_2:

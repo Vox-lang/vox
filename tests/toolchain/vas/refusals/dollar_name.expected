@@ -1,0 +1,1 @@
+dollar_name.asm:3: $rbx, written with a dollar sign, is outside the NASM subset vas accepts

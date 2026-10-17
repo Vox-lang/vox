@@ -1,0 +1,2 @@
+struc.asm:2: the directive struc is outside the NASM subset vas accepts
+struc.asm:3: the directive endstruc is outside the NASM subset vas accepts
