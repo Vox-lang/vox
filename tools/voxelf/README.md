@@ -11,7 +11,8 @@ It comes as a library, `Library 'voxelf' version "0.1".`, and a command,
 
 | File | What it is |
 | --- | --- |
-| `voxelf.vox` | the library: layout, the ELF writer, the manifest reader |
+| `voxelf.vox` | the library: its Library line, and the body seen under it |
+| `voxelf-body.vox` | the library's functions: layout, the ELF writer, the manifest reader. It has no Library line, so another library, such as vas, can see it and take the functions in under its own name |
 | `vox-elf.vox` | the command; it `see`s the library as source, so it is a flat static binary with nothing to load |
 | `nasm-image.sh` | assembles a compiler `.asm` with `nasm -f bin` into an image and a manifest, using `vox-elf --layout` for the addresses |
 | `build.sh` | builds `libvoxelf.so` with its `.lib`, and the static `vox-elf` |
@@ -100,6 +101,13 @@ as source, which is how `vox-elf` gets it. `tools/voxelf/build.sh [DIR]` does
 both, into `$VOXELF_BUILD` or `${TMPDIR:-/tmp}/voxelf-build`, compiling in that
 directory rather than in the source tree.
 
+Another library that needs voxelf sees `voxelf-body.vox`, not `voxelf.vox`.
+A seen file is read where the `see` stands, and a Library line puts every
+function after it into that library, so seeing `voxelf.vox` would move the
+seeing library's own functions into voxelf. Seen by its body, voxelf's
+functions are taken in under the other library's name instead: in vas's
+shared build they are exported as `vas_0_1_...`.
+
 Nothing in the library prints or exits. A function that fails answers how
 many errors there were and puts one line of diagnostics in the caller's hands
 for each error; for a Vox caller it also raises the error flag.
@@ -134,7 +142,7 @@ to a buffer the caller owns:
   were none.
 
 Vox has no way to keep a library's helpers private, so every function in
-`voxelf.vox` is exported; only the ones above are its interface.
+`voxelf-body.vox` is exported; only the ones above are its interface.
 
 ## What it refuses
 

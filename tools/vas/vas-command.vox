@@ -1,0 +1,59 @@
+(vas: assemble the NASM-dialect source the Vox compiler writes into a
+ static x86-64 executable. The work is the vas library's; this program
+ reads the command line, makes one call, and passes the diagnostics on to
+ standard error.)
+
+see "./vas.vox".
+
+A flag called 'wants help' is "--help" or "-h", it is a boolean.
+A flag called 'output path' is "--output" or "-o", it is a text.
+A flag called 'coreasm directory given' is "--coreasm" or "-c", it is a text.
+Parse flags.
+
+A text called program is arguments's name.
+
+If 'wants help' then,
+    Print "Usage: {program} [OPTION]... SOURCE -o OUTPUT",
+    Print "Assemble SOURCE, the assembly the Vox compiler writes, into the static",
+    Print "x86-64 executable OUTPUT, the way nasm and ld would build it.",
+    Print "\nOptions:",
+    Print "  -o, --output FILE   write the executable to FILE; there is no default",
+    Print "  -c, --coreasm DIR   look for the compiler's coreasm in DIR, for the",
+    Print "                      source's %include lines (default: the directory",
+    Print "                      VOX_CORE_PATH names, else /usr/share/vox/coreasm)",
+    Print "  -h, --help          display this help and exit",
+    Print "\nThe executable is written with mode 0644, so make it executable with chmod.",
+    Print "Nothing is written when the source has errors. The exit status is the",
+    Print "number of errors, or 255 when there are more than 255, and each error is",
+    Print "one line on standard error.",
+    Exit 0.
+
+Open a file for writing called 'error stream' at 2 (standard error).
+
+a list called 'source paths' is arguments's all.
+If 'source paths''s length is not 1 then,
+    Write "{program}: name exactly one source; try --help\n" to 'error stream',
+    Exit 2.
+If 'output path' is empty then,
+    Write "{program}: name the output with -o; try --help\n" to 'error stream',
+    Exit 2.
+
+a text called 'coreasm directory' is 'coreasm directory given'.
+If 'coreasm directory' is empty then,
+    If the environment variable "VOX_CORE_PATH" exists then,
+        Set 'coreasm directory' to environment's "VOX_CORE_PATH"..
+If 'coreasm directory' is empty then,
+    Set 'coreasm directory' to "/usr/share/vox/coreasm".
+
+a text called 'source path' is element 1 of 'source paths'.
+a text called messages is 'assemble the file' of 'source path' and 'coreasm directory' and 'output path'.
+Write messages to 'error stream'.
+
+(Each diagnostic is one line, so the newlines count the errors. An exit
+ status is one byte, so a count it cannot hold is given as its largest
+ value, as the help says.)
+a buffer called diagnostics is "{messages}".
+a number called 'error count' is 0.
+For each character from diagnostics, if character is '\n' then, increment 'error count'..
+If 'error count' is greater than 255 then, Set 'error count' to 255.
+Exit 'error count'.

@@ -1,0 +1,1 @@
+data_in_bss.asm:3: the section .bss holds room and no bytes, so it cannot hold data; reserve the room with resb, resd or resq

@@ -1,0 +1,1117 @@
+(The vas assembler: the passes that turn the front end's statement records
+ into a program, and the entries that write it.
+
+ This file is part of Library 'vas'. It has no Library line of its own, so
+ it compiles into whatever sees it: vas.vox reaches it with
+   see "./assembler.vox".
+
+ Pass one walks the records in order and measures every statement: an
+ instruction by asking the encoder how many bytes it takes, a data
+ directive by its items, a reservation by its count, and an align by the
+ padding it needs where it stands. Each label is given its offset in its
+ section as the walk reaches it. A value that waits on a label is worked
+ out as soon as the label has its place. One that waits on a label further
+ on is taken at its full width for now, and once every label has a place
+ pass one measures those statements again, and again after any size
+ changes, until no size changes, the way NASM settles its sizes. voxelf
+ then places the sections, which makes every label an address.
+
+ Pass two walks the records again and lays down the bytes of each
+ statement at its address, checking that every statement comes out the
+ size pass one measured. voxelf writes the executable from the section
+ images.
+
+ A value made of labels is one of two sorts. It can be a number no layout
+ changes, such as the length of a string, $ - str_0 - 1; or an address,
+ which the layout decides. The encoder takes the first as a number, and
+ may choose a short form for it, and takes the second at its full width,
+ as NASM does, so pass one has to tell them apart before any section is
+ placed. It works the expression out twice: once with every section where
+ its offsets put it, and once with each section moved by a different large
+ amount. A value that comes out the same both times is one no layout
+ changes; an equ constant must be one, since vas takes an equ only as a
+ number.
+
+ The entries, for a host that is not Vox, take and return paths, numbers
+ and texts:
+
+   'assemble the file' of <source .asm> and <coreasm directory> and <output>
+       Assembles the source into a static executable at the output path.
+       Answers the diagnostics, one per line, or the empty text when the
+       executable was written.
+
+   'assemble file counting errors' of the same three
+       The same, answering the number of errors, and keeping the
+       diagnostics of a failing call for 'assembler diagnostics', as
+       'expand file' does.
+
+ A Vox program can call 'assemble the source' with the same three and a
+ buffer for the diagnostics, which answers the number of errors. The
+ executable is written with mode 0644, as voxelf writes it: the caller
+ makes it executable.
+
+ What it costs. The front end's cost is described in README.md. On top of
+ it, each record is read out of the statements list once in each pass, and
+ a record read out of a list is a copy, with its operands; the statements
+ pass one measures again are read once more in each round.)
+
+(--- Named numbers ---------------------------------------------------------)
+
+(A library has no top-level statements, so each number with a meaning is a
+ function that answers it.)
+
+(Where a static executable starts in memory, as ld puts it.)
+To 'the load base'.
+  Return a number, 0x400000.
+
+(The sections, by number. The note section holds no bytes: it only says
+ that the stack is not executable.)
+To 'the text section'.
+  Return a number, 1.
+
+To 'the read-only section'.
+  Return a number, 2.
+
+To 'the data section'.
+  Return a number, 3.
+
+To 'the zero-filled section'.
+  Return a number, 4.
+
+To 'the stack note section'.
+  Return a number, 5.
+
+To 'how many sections there are'.
+  Return a number, 5.
+
+(The facts about each section, two numbers to a section in the section
+ facts list: where it has reached, and the alignment it asks for.)
+To 'facts per section'.
+  Return a number, 2.
+
+To 'the end fact'.
+  Return a number, 1.
+
+To 'the alignment fact'.
+  Return a number, 2.
+
+(The kinds of statement, as the layout holds them.)
+To 'a label statement'.
+  Return a number, 1.
+
+To 'a constant statement'.
+  Return a number, 2.
+
+To 'an align statement'.
+  Return a number, 3.
+
+To 'a data statement'.
+  Return a number, 4.
+
+To 'a reservation statement'.
+  Return a number, 5.
+
+To 'an instruction statement'.
+  Return a number, 6.
+
+(section, global and default: statements that take no room.)
+To 'a directive statement'.
+  Return a number, 7.
+
+(The layout holds five numbers for every statement: its kind, its
+ section, its size in bytes, its offset in the section, and, for an align,
+ the boundary it pads to.)
+To 'slots per statement'.
+  Return a number, 5.
+
+To 'the kind slot'.
+  Return a number, 1.
+
+To 'the section slot'.
+  Return a number, 2.
+
+To 'the size slot'.
+  Return a number, 3.
+
+To 'the offset slot'.
+  Return a number, 4.
+
+To 'the boundary slot'.
+  Return a number, 5.
+
+(A label's place is kept as one number: its section times this, and its
+ offset. Every placed label's place is above 0, so a name that was never
+ placed reads as 0.)
+To 'section spacing'.
+  Return a number, 1099511627776.
+
+(How many times pass one measures again before it gives up on the sizes
+ settling. NASM's own limit is far higher, but the corpus settles in one.)
+To 'most rounds to settle'.
+  Return a number, 8.
+
+(NASM's align fills with nop, in a section of data as in code.)
+To 'the nop byte'.
+  Return a number, 0x90.
+
+(2 to the power 52: the place of a float's lowest exponent bit.)
+To 'the float mantissa span'.
+  Return a float, 4503599627370496.0.
+
+To 'the float exponent bias'.
+  Return a number, 1023.
+
+To 'the lowest normal float exponent'.
+  Return a number, -1022.
+
+(--- Sections --------------------------------------------------------------)
+
+(The number of a section the front end names. The front end takes no
+ other section, so there is no answer for one it does not name.)
+To 'the number of the section' of a text called 'section name'.
+  If 'section name' is ".text" then, Return a number, 'the text section'.
+  If 'section name' is ".rodata" then, Return a number, 'the read-only section'.
+  If 'section name' is ".data" then, Return a number, 'the data section'.
+  If 'section name' is ".bss" then, Return a number, 'the zero-filled section'.
+  Return a number, 'the stack note section'.
+
+To 'the section name' of a number called section.
+  If section is 'the text section' then, Return a text, ".text".
+  If section is 'the read-only section' then, Return a text, ".rodata".
+  If section is 'the data section' then, Return a text, ".data".
+  If section is 'the zero-filled section' then, Return a text, ".bss".
+  Return a text, ".note.GNU-stack".
+
+(The kind voxelf lays each section out as.)
+To 'the voxelf kind of the section' of a number called section.
+  If section is 'the text section' then, Return a text, "text".
+  If section is 'the read-only section' then, Return a text, "rodata".
+  If section is 'the data section' then, Return a text, "data".
+  Return a text, "bss".
+
+(The alignment NASM gives each section in an object before any align
+ raises it: 16 for code, 4 for data, which is what ld lays them out by.)
+To 'the first alignment of the section' of a number called section.
+  If section is 'the text section' then, Return a number, 16.
+  If section is 'the stack note section' then, Return a number, 1.
+  Return a number, 4.
+
+(A section that holds bytes in the file, rather than only room in memory.)
+To 'the section holds bytes' of a number called section.
+  If section is 'the zero-filled section' or section is 'the stack note section' then, Return a boolean, false.
+  Return a boolean, true.
+
+(How far each section is moved in the second working out of a value, so
+ that a value made of labels comes out the same both times only when no
+ layout changes it. Each section moves by a whole number of steps, one
+ step for each place in the order of sections, and by a twist that grows
+ with the square of that place. A step is the section spacing, 2 to the
+ power 40, larger than any offset in a section, so a moved label never
+ lands where an unmoved one could. The twist is an odd, irregular number
+ far smaller than a step, chosen so that the moves do not grow evenly: no
+ mix of a few labels from different sections, added and subtracted, moves
+ by nothing unless each section's labels cancel out on their own.)
+To 'the test shift step'.
+  Return a number, 'section spacing'.
+
+To 'the test shift twist'.
+  Return a number, 0x1357900.
+
+To 'the test shift of the section' of a number called section.
+  Return a number, {section multiply 'the test shift step'} add {section multiply section multiply 'the test shift twist'}.
+
+(Where a fact about a section stands in the section facts list.)
+To 'the section fact slot' with a number called section and a number called fact.
+  Return a number, {{section subtract 1} multiply 'facts per section'} add fact.
+
+To 'the fact about the section' with a list called 'section facts' and a number called section and a number called fact.
+  Return a number, element {'the section fact slot' with section and fact} of 'section facts'.
+
+To 'set the fact about the section' with a list called 'section facts' and a number called section and a number called fact and a number called amount.
+  Set element {'the section fact slot' with section and fact} of 'section facts' to amount.
+
+(Every section empty, at the alignment NASM starts it with.)
+To 'start the section facts' with a list called 'section facts'.
+  For each section from 1 to 'how many sections there are',
+    append 0 to 'section facts',
+    append {'the first alignment of the section' of section} to 'section facts'.
+
+(The address voxelf gave a section, once the sections are placed. A
+ section that holds nothing is not placed, and has none.)
+To 'the final base of the section' with a number called section and a map called 'what vas knows'.
+  If section is 'the text section' then, Return a number, 'what vas knows''s "base of .text".
+  If section is 'the read-only section' then, Return a number, 'what vas knows''s "base of .rodata".
+  If section is 'the data section' then, Return a number, 'what vas knows''s "base of .data".
+  If section is 'the zero-filled section' then, Return a number, 'what vas knows''s "base of .bss".
+  Return a number, 0.
+
+To 'set the final base of the section' with a number called section and a number called base and a map called 'what vas knows'.
+  If section is 'the text section' then, Set 'what vas knows''s "base of .text" to base.
+  If section is 'the read-only section' then, Set 'what vas knows''s "base of .rodata" to base.
+  If section is 'the data section' then, Set 'what vas knows''s "base of .data" to base.
+  If section is 'the zero-filled section' then, Set 'what vas knows''s "base of .bss" to base.
+
+(Where a section starts for the expression being worked out: at its final
+ address once the sections are placed, at 0 before, and moved by its test
+ shift for the second working out of a value.)
+To 'the base of the section' with a number called section and a map called 'what vas knows'.
+  a number called base is 0.
+  a boolean called 'addresses are final' is 'what vas knows''s "addresses are final".
+  If 'addresses are final' then, set base to 'the final base of the section' with section and 'what vas knows'.
+  a boolean called 'the layout is under test' is 'what vas knows''s "the layout is under test".
+  If 'the layout is under test' then, set base to base add {'the test shift of the section' of section}.
+  Return a number, base.
+
+(--- The layout ------------------------------------------------------------)
+
+To 'the layout slot' with a number called 'statement number' and a number called slot.
+  Return a number, {{'statement number' subtract 1} multiply 'slots per statement'} add slot.
+
+To 'the layout fact' with a list called 'the layout' and a number called 'statement number' and a number called slot.
+  Return a number, element {'the layout slot' with 'statement number' and slot} of 'the layout'.
+
+To 'set the layout fact' with a list called 'the layout' and a number called 'statement number' and a number called slot and a number called amount.
+  Set element {'the layout slot' with 'statement number' and slot} of 'the layout' to amount.
+
+(The kind of statement a record's kind stands for.)
+To 'the statement kind' of a text called kind.
+  If kind is "label" then, Return a number, 'a label statement'.
+  If kind is "constant" then, Return a number, 'a constant statement'.
+  If kind is "align" then, Return a number, 'an align statement'.
+  If kind is "data" then, Return a number, 'a data statement'.
+  If kind is "reservation" then, Return a number, 'a reservation statement'.
+  If kind is "instruction" then, Return a number, 'an instruction statement'.
+  Return a number, 'a directive statement'.
+
+(The bytes an align needs where it stands, to reach its boundary.)
+To 'the padding to the boundary' with a number called offset and a number called boundary.
+  If boundary is less than 2 then, Return a number, 0.
+  a number called overhang is offset modulo boundary.
+  If overhang is 0 then, Return a number, 0.
+  Return a number, boundary subtract overhang.
+
+(--- Values made of labels -------------------------------------------------)
+
+(The front end's expression reader asks these once labels have places,
+ which 'what vas knows' marks with "labels are placed". Before then a name
+ that is not a known constant, and $, leave the expression waiting, as the
+ front end needs.)
+
+(A label's value: its offset in its section, from where that section
+ starts. A label not yet placed leaves the expression waiting on it.)
+To 'the placed value of the name' with a text called 'full name' and a text called word and a map called 'what vas knows' and a map called reader.
+  a number called place is 'what vas knows''s "placed {full name}".
+  If place is less than or equal to 0 then, 'make the expression wait for the name' with reader and word, Return a number, 0.
+  a number called section is place divide 'section spacing'.
+  a number called offset is place modulo 'section spacing'.
+  Return a number, offset add {'the base of the section' with section and 'what vas knows'}.
+
+(The value of $: where the statement being read starts.)
+To 'the value of the dollar sign' with a map called 'what vas knows' and a map called reader.
+  a boolean called 'labels are placed' is 'what vas knows''s "labels are placed".
+  If not 'labels are placed' then, 'make the expression wait for the name' with reader and "$", Return a number, 0.
+  a number called offset is 'what vas knows''s "current offset".
+  a number called section is 'what vas knows''s "current section".
+  Return a number, offset add {'the base of the section' with section and 'what vas knows'}.
+
+(Works out an expression written as text, as the front end wrote it into
+ the record, with the labels as they are placed now. What it comes to goes
+ into the expression answer: "problem", what is wrong with it, or the empty
+ text; "resolved", true once every name in it has a value; "fixed", true
+ when no layout changes that value; "value"; and "names", the names it
+ still waits on.)
+To 'work out the expression' with a text called expression and a map called 'what vas knows' and a map called 'expression answer'.
+  a list called tokens is 'the tokens' of expression.
+  a list called words is 'the words in the tokens' with tokens and 1 and tokens's length.
+  Set 'what vas knows''s "the layout is under test" to false.
+  a map called 'reader at the layout' is 'a reader of the words' with 1 and words's length.
+  a number called 'value as placed' is 'the value of the expression' with words and 'what vas knows' and 'reader at the layout'.
+  a text called problem is 'reader at the layout''s "problem".
+  a boolean called 'it is resolved' is 'reader at the layout''s "constant".
+  a text called names is 'reader at the layout''s "names".
+  Set 'expression answer''s "problem" to problem.
+  Set 'expression answer''s "resolved" to 'it is resolved'.
+  Set 'expression answer''s "names" to names.
+  Set 'expression answer''s "value" to 'value as placed'.
+  Set 'expression answer''s "fixed" to false.
+  If problem is not "" or not 'it is resolved' then, Return.
+  Set 'what vas knows''s "the layout is under test" to true.
+  a map called 'reader with the layout moved' is 'a reader of the words' with 1 and words's length.
+  a number called 'value as moved' is 'the value of the expression' with words and 'what vas knows' and 'reader with the layout moved'.
+  Set 'what vas knows''s "the layout is under test" to false.
+  If 'value as moved' is 'value as placed' then, Set 'expression answer''s "fixed" to true.
+
+(The message for names that never got a value, every label having its
+ place: names nothing defines.)
+To 'the message for the names not defined' of a text called names.
+  a text called complaint is "".
+  Set complaint to "the name {names} is not defined".
+  a buffer called characters is "{names}".
+  For each position from 1 to characters's size,
+    if byte position of characters is ' ' then, Set complaint to "the names {names} are not defined"..
+  Return a text, complaint.
+
+(A value worked out into an operand of an instruction, under the keys the
+ encoder reads: the value, and whether it is a number no layout changes.
+ The expression answer notes how the size could still change: "waits on a later
+ label" for a value with a name not yet placed, "holds a value made of
+ labels" for a value whose labels could move apart. Answers what is wrong,
+ or the empty text.)
+To 'take the worked out value' with a map called operand and a text called 'value key' and a text called 'known key' and a boolean called 'every label is placed' and a map called 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is resolved' is 'expression answer''s "resolved".
+  a boolean called 'it is fixed' is 'expression answer''s "fixed".
+  a number called value is 'expression answer''s "value".
+  a text called names is 'expression answer''s "names".
+  If not 'it is resolved' and 'every label is placed' then, Return a text, 'the message for the names not defined' of names.
+  If not 'it is resolved' then, Set 'expression answer''s "waits on a later label" to true.
+  If 'it is fixed' then, Set 'expression answer''s "holds a value made of labels" to true.
+  Set operand's "{value key}" to value.
+  Set operand's "{known key}" to 'it is fixed'.
+  Return a text, "".
+
+(--- Statements ------------------------------------------------------------)
+
+(Everything about where a statement stands that its expressions read: its
+ scope for local labels, its section, and its offset, for $.)
+To 'begin the statement' with a map called record and a number called section and a number called offset and a map called 'what vas knows'.
+  a text called scope is record's "scope".
+  Set 'what vas knows''s "scope" to scope.
+  Set 'what vas knows''s "current section" to section.
+  Set 'what vas knows''s "current offset" to offset.
+
+To 'complain about the statement' with a buffer called diagnostics and a map called 'what vas knows' and a map called record and a text called complaint.
+  a text called 'source name' is record's "file".
+  a number called 'line number' is record's "line".
+  complain with diagnostics and 'what vas knows' and 'source name' and 'line number' and complaint.
+
+(How many times a times prefix repeats the statement: 1 without one. The
+ count must be known before anything is assembled, as the count of a %rep
+ must; 0 when it is not, or is less than 0, with the complaint made.)
+To 'the repetitions' of a map called record and a map called 'what vas knows' and a buffer called diagnostics.
+  a boolean called 'it is known' is record's "repeat is constant".
+  a number called repetitions is record's "repeat count".
+  If not 'it is known' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the count of times must be known before anything is assembled", Return a number, 0.
+  If repetitions is less than 0 then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "times cannot repeat a statement a negative number of times", Return a number, 0.
+  Return a number, repetitions.
+
+(Is the statement under a default rel? NASM's default rel holds from the
+ statement after it to the end of the source; its other default, abs, is
+ outside the subset, so it never ends.)
+To 'the statement is relative by default' with a number called 'statement number' and a map called 'what vas knows'.
+  a number called 'first relative statement' is 'what vas knows''s "relative by default from".
+  If 'first relative statement' is 0 then, Return a boolean, false.
+  Return a boolean, 'statement number' is greater than 'first relative statement'.
+
+(Every operand of an instruction that waits on a label, worked out with
+ the labels as they are placed now, and memory with no register made
+ relative under default rel. The operands go back into the record for the
+ encoder. Answers what is wrong, or the empty text.
+
+ An instruction with nothing to work out is left as it is. Otherwise each
+ operand goes back as a fresh map with its entries copied in one by one:
+ a map read out of a list and put into another is stored as a bare number,
+ a Vox bug that voxelf's 'place the sections' describes.)
+To 'work out the operands' with a map called record and a number called 'statement number' and a boolean called 'every label is placed' and a map called 'what vas knows' and a map called 'expression answer'.
+  Set 'expression answer''s "waits on a later label" to false.
+  Set 'expression answer''s "holds a value made of labels" to false.
+  a boolean called 'relative by default' is 'the statement is relative by default' with 'statement number' and 'what vas knows'.
+  a list called operands is record's "operands".
+  If not 'the operands need working out' with operands and 'relative by default' then, Return a text, "".
+  a list called 'worked out operands' is [].
+  a text called problem is "".
+  For each 'operand number' from 1 to operands's length,
+    a map called operand is element 'operand number' of operands,
+    a text called 'its problem' is 'work out a copy of the operand' with operand and 'relative by default' and 'every label is placed' and 'what vas knows' and 'expression answer' and 'worked out operands',
+    if problem is "" then, set problem to 'its problem'..
+  Set record's "operands" to 'worked out operands'.
+  Return a text, problem.
+
+(Does any operand wait on a label, or need making relative?)
+To 'the operands need working out' with a list called operands and a boolean called 'relative by default'.
+  For each 'operand number' from 1 to operands's length,
+    a map called operand is element 'operand number' of operands,
+    a text called kind is operand's "kind",
+    a boolean called 'the value is known' is operand's "is constant",
+    a boolean called 'the displacement is known' is operand's "displacement is constant",
+    a text called base is operand's "base",
+    a text called index is operand's "index",
+    a boolean called 'it is relative' is operand's "relative",
+    if kind is "expression" and not 'the value is known' then, Return a boolean, true.
+    if kind is "memory" and not 'the displacement is known' then, Return a boolean, true.
+    if kind is "memory" and 'relative by default' and base is "" and index is "" and not 'it is relative' then, Return a boolean, true..
+  Return a boolean, false.
+
+(One operand copied into a fresh map, worked out there, and put on the list
+ of worked out operands. A register needs nothing worked out. Answers what
+ is wrong, or the empty text.)
+To 'work out a copy of the operand' with a map called operand and a boolean called 'relative by default' and a boolean called 'every label is placed' and a map called 'what vas knows' and a map called 'expression answer' and a list called 'worked out operands'.
+  a text called kind is operand's "kind".
+  a text called 'size word' is operand's "size".
+  a text called written is operand's "text".
+  a map called 'fresh operand' is {"kind": kind, "size": 'size word', "text": written}.
+  a text called problem is "".
+  If kind is "register" then, 'copy the register entries' with operand and 'fresh operand'.
+  If kind is "expression" then, 'copy the expression entries' with operand and 'fresh operand', set problem to 'work out the immediate' with 'fresh operand' and 'every label is placed' and 'what vas knows' and 'expression answer'.
+  If kind is "memory" then, 'copy the memory entries' with operand and 'fresh operand', set problem to 'work out the displacement' with 'fresh operand' and 'relative by default' and 'every label is placed' and 'what vas knows' and 'expression answer'.
+  append 'fresh operand' to 'worked out operands'.
+  Return a text, problem.
+
+To 'copy the register entries' with a map called operand and a map called 'fresh operand'.
+  a text called register is operand's "register".
+  a text called class is operand's "class".
+  a number called 'register number' is operand's "number".
+  Set 'fresh operand''s "register" to register.
+  Set 'fresh operand''s "class" to class.
+  Set 'fresh operand''s "number" to 'register number'.
+
+To 'copy the expression entries' with a map called operand and a map called 'fresh operand'.
+  a text called expression is operand's "expression".
+  a boolean called 'it is known' is operand's "is constant".
+  a number called value is operand's "value".
+  a text called names is operand's "names".
+  Set 'fresh operand''s "expression" to expression.
+  Set 'fresh operand''s "is constant" to 'it is known'.
+  Set 'fresh operand''s "value" to value.
+  Set 'fresh operand''s "names" to names.
+
+To 'copy the memory entries' with a map called operand and a map called 'fresh operand'.
+  a boolean called 'it is relative' is operand's "relative".
+  a text called base is operand's "base".
+  a text called index is operand's "index".
+  a number called scale is operand's "scale".
+  a text called displacement is operand's "displacement".
+  a boolean called 'it is known' is operand's "displacement is constant".
+  a number called value is operand's "displacement value".
+  a text called names is operand's "displacement names".
+  Set 'fresh operand''s "relative" to 'it is relative'.
+  Set 'fresh operand''s "base" to base.
+  Set 'fresh operand''s "index" to index.
+  Set 'fresh operand''s "scale" to scale.
+  Set 'fresh operand''s "displacement" to displacement.
+  Set 'fresh operand''s "displacement is constant" to 'it is known'.
+  Set 'fresh operand''s "displacement value" to value.
+  Set 'fresh operand''s "displacement names" to names.
+
+To 'work out the immediate' with a map called operand and a boolean called 'every label is placed' and a map called 'what vas knows' and a map called 'expression answer'.
+  a boolean called 'it is known' is operand's "is constant".
+  If 'it is known' then, Return a text, "".
+  a text called expression is operand's "expression".
+  'work out the expression' with expression and 'what vas knows' and 'expression answer'.
+  Return a text, 'take the worked out value' with operand and "value" and "is constant" and 'every label is placed' and 'expression answer'.
+
+To 'work out the displacement' with a map called operand and a boolean called 'relative by default' and a boolean called 'every label is placed' and a map called 'what vas knows' and a map called 'expression answer'.
+  a text called base is operand's "base".
+  a text called index is operand's "index".
+  a boolean called 'it is relative' is operand's "relative".
+  If 'relative by default' and base is "" and index is "" and not 'it is relative' then, Set operand's "relative" to true.
+  a boolean called 'it is known' is operand's "displacement is constant".
+  If 'it is known' then, Return a text, "".
+  a text called displacement is operand's "displacement".
+  'work out the expression' with displacement and 'what vas knows' and 'expression answer'.
+  Return a text, 'take the worked out value' with operand and "displacement value" and "displacement is constant" and 'every label is placed' and 'expression answer'.
+
+(The jumps and the call the encoder takes, every one of them encoded
+ rel32, so that an instruction's size never depends on where its target
+ is. The jumps that have only a rel8 form, jecxz, jrcxz and loop among
+ them, are not here: the front end does not know them, and refuses them
+ before pass one.)
+To 'the instruction jumps' with a map called record.
+  a text called mnemonic is record's "mnemonic".
+  a list called 'jumps and calls' is ["call", "ja", "jae", "jb", "jbe", "je", "jg", "jge", "jl", "jle", "jmp", "jnc", "jne", "jns", "jnz", "jo", "js", "jz"].
+  Return a boolean, {'where the text stands' with 'jumps and calls' and mnemonic} is greater than 0.
+
+(An equ constant that waits on a label, worked out with the labels as they
+ are placed now. Its value must be a number no layout changes. Answers true
+ once it has its value; with 'it may complain', what is wrong with it is
+ reported.)
+To 'work out the constant' with a map called record and a boolean called 'every label is placed' and a boolean called 'it may complain' and a map called 'what vas knows' and a map called 'expression answer' and a buffer called diagnostics.
+  a boolean called 'it is known' is record's "is constant".
+  If 'it is known' then, Return a boolean, true.
+  a text called expression is record's "expression".
+  a text called 'full name' is record's "full name".
+  a text called 'constant name' is record's "name".
+  'work out the expression' with expression and 'what vas knows' and 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  a boolean called 'it is resolved' is 'expression answer''s "resolved".
+  a boolean called 'it is fixed' is 'expression answer''s "fixed".
+  a number called value is 'expression answer''s "value".
+  a text called names is 'expression answer''s "names".
+  If problem is not "" and 'it may complain' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and problem.
+  If problem is not "" then, Return a boolean, false.
+  If not 'it is resolved' and 'every label is placed' and 'it may complain' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and {'the message for the names not defined' of names}.
+  If not 'it is resolved' then, Return a boolean, false.
+  a text called refusal is "".
+  Set refusal to "the equ for {constant name} gives an address, which depends on where the sections are placed; vas takes an equ only as a number".
+  If not 'it is fixed' and 'it may complain' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and refusal.
+  If not 'it is fixed' then, Return a boolean, false.
+  Set 'what vas knows''s "constant known {full name}" to true.
+  Set 'what vas knows''s "constant {full name}" to value.
+  Return a boolean, true.
+
+(--- Pass one --------------------------------------------------------------)
+
+(Measure every statement, in order, into the layout, and place each label
+ as the walk reaches it. The statements whose size could still change are
+ put on the list of statements to settle: an equ constant that waits on a
+ label, and an instruction that is not a jump and holds a value made of
+ labels. An instruction that waited on a label still to come goes on as
+ its statement number, and one whose labels could only move apart goes on
+ as that number below 0, since it needs measuring again only once some
+ size has changed.)
+To 'measure the program' with a list called statements and a map called 'what vas knows' and a list called 'the layout' and a list called 'section facts' and a list called 'labels in order' and a list called 'label statements' and a list called 'statements to settle' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called diagnostics.
+  For each 'statement number' from 1 to statements's length,
+    a map called record is element 'statement number' of statements,
+    'measure the statement' with record and 'statement number' and 'what vas knows' and 'the layout' and 'section facts' and 'labels in order' and 'label statements' and 'statements to settle' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and diagnostics.
+
+To 'measure the statement' with a map called record and a number called 'statement number' and a map called 'what vas knows' and a list called 'the layout' and a list called 'section facts' and a list called 'labels in order' and a list called 'label statements' and a list called 'statements to settle' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called diagnostics.
+  a text called kind is record's "kind".
+  a text called 'section name' is record's "section".
+  a number called section is 'the number of the section' of 'section name'.
+  a number called offset is 'the fact about the section' with 'section facts' and section and 'the end fact'.
+  a number called 'statement kind' is 'the statement kind' of kind.
+  Repeat 'slots per statement' times, append 0 to 'the layout'.
+  'set the layout fact' with 'the layout' and 'statement number' and 'the kind slot' and 'statement kind'.
+  'set the layout fact' with 'the layout' and 'statement number' and 'the section slot' and section.
+  'set the layout fact' with 'the layout' and 'statement number' and 'the offset slot' and offset.
+  'begin the statement' with record and section and offset and 'what vas knows'.
+  a number called size is 0.
+  If 'statement kind' is 'a label statement' then, 'place the label' with record and 'statement number' and section and offset and 'what vas knows' and 'labels in order' and 'label statements'.
+  If 'statement kind' is 'a constant statement' then, 'measure the constant' with record and 'statement number' and 'what vas knows' and 'statements to settle' and 'expression answer' and diagnostics.
+  If 'statement kind' is 'a directive statement' then, 'note the directive' with record and 'statement number' and 'what vas knows'.
+  If 'statement kind' is 'an align statement' then, set size to 'measure the alignment' with record and 'statement number' and section and offset and 'the layout' and 'section facts'.
+  If 'statement kind' is 'a data statement' then, set size to 'measure the data' with record and 'what vas knows' and diagnostics.
+  If 'statement kind' is 'a reservation statement' then, set size to 'measure the reservation' with record and 'what vas knows' and diagnostics.
+  If 'statement kind' is 'an instruction statement' then, set size to 'measure the instruction in pass one' with record and 'statement number' and 'what vas knows' and 'statements to settle' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and diagnostics.
+  'check what the section holds' with record and 'statement kind' and section and size and 'what vas knows' and diagnostics.
+  'set the layout fact' with 'the layout' and 'statement number' and 'the size slot' and size.
+  'set the fact about the section' with 'section facts' and section and 'the end fact' and {offset add size}.
+
+(A label takes the place where the walk has reached in its section.)
+To 'place the label' with a map called record and a number called 'statement number' and a number called section and a number called offset and a map called 'what vas knows' and a list called 'labels in order' and a list called 'label statements'.
+  a text called 'full name' is record's "full name".
+  Set 'what vas knows''s "placed {full name}" to {section multiply 'section spacing'} add offset.
+  append 'full name' to 'labels in order'.
+  append 'statement number' to 'label statements'.
+
+(An equ constant is worked out now if its labels already have places, and
+ settled later if not. Either way it goes on the list of statements to
+ settle when it waits on a label, since its labels could still move apart.)
+To 'measure the constant' with a map called record and a number called 'statement number' and a map called 'what vas knows' and a list called 'statements to settle' and a map called 'expression answer' and a buffer called diagnostics.
+  a boolean called 'it is known' is record's "is constant".
+  If 'it is known' then, Return.
+  (What is wrong with it is told once, when it is settled with every label
+   placed)
+  'work out the constant' with record and false and false and 'what vas knows' and 'expression answer' and diagnostics.
+  append 'statement number' to 'statements to settle'.
+
+(default rel holds from here on. Only the first one is noted: once it is
+ given, nothing in the subset ends it, since default abs is refused, so a
+ later default rel changes nothing.)
+To 'note the directive' with a map called record and a number called 'statement number' and a map called 'what vas knows'.
+  a text called kind is record's "kind".
+  a number called 'first relative statement' is 'what vas knows''s "relative by default from".
+  If kind is "default" and 'first relative statement' is 0 then, Set 'what vas knows''s "relative by default from" to 'statement number'.
+
+(An align pads to its boundary, and asks its section to start on one at
+ least as large, as NASM's align does.)
+To 'measure the alignment' with a map called record and a number called 'statement number' and a number called section and a number called offset and a list called 'the layout' and a list called 'section facts'.
+  a number called boundary is record's "boundary".
+  'set the layout fact' with 'the layout' and 'statement number' and 'the boundary slot' and boundary.
+  a number called alignment is 'the fact about the section' with 'section facts' and section and 'the alignment fact'.
+  If boundary is greater than alignment then, 'set the fact about the section' with 'section facts' and section and 'the alignment fact' and boundary.
+  Return a number, 'the padding to the boundary' with offset and boundary.
+
+(A data directive takes its unit for each item, and a string its own
+ bytes, padded with zeros to a whole number of units, as NASM pads a
+ string in dq.)
+To 'measure the data' with a map called record and a map called 'what vas knows' and a buffer called diagnostics.
+  a number called unit is record's "unit".
+  a list called items is record's "items".
+  a number called size is 0.
+  For each 'item number' from 1 to items's length,
+    a map called item is element 'item number' of items,
+    a text called kind is item's "kind",
+    a text called written is item's "text",
+    if kind is "string" then, set size to size add {'the padded length' with {'the length of the string' of written} and unit}.
+    if kind is not "string" then, set size to size add unit.
+    if kind is "float" and unit is not 8 then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the floating-point number {written} needs dq, which holds the 8 bytes of a double"..
+  Return a number, size multiply {'the repetitions' of record and 'what vas knows' and diagnostics}.
+
+(The bytes between a string's quote marks.)
+To 'the length of the string' of a text called written.
+  a buffer called characters is "{written}".
+  Return a number, characters's size subtract 2.
+
+To 'the padded length' with a number called length and a number called unit.
+  a number called overhang is length modulo unit.
+  If overhang is 0 then, Return a number, length.
+  Return a number, length add {unit subtract overhang}.
+
+(A reservation takes its count of units. The front end has already said
+ whether the count is known; it must be, before anything is assembled.)
+To 'measure the reservation' with a map called record and a map called 'what vas knows' and a buffer called diagnostics.
+  a number called unit is record's "unit".
+  a boolean called 'it is known' is record's "count is constant".
+  a number called count is record's "count value".
+  If not 'it is known' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the count of a reservation must be known before anything is assembled", Return a number, 0.
+  If count is less than 0 then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "a reservation cannot hold a negative number of units", Return a number, 0.
+  Return a number, unit multiply count multiply {'the repetitions' of record and 'what vas knows' and diagnostics}.
+
+(An instruction in pass one: measured with every value worked out that
+ its labels so far allow, and put on the list of statements to settle if
+ its size could still change.)
+To 'measure the instruction in pass one' with a map called record and a number called 'statement number' and a map called 'what vas knows' and a list called 'statements to settle' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called diagnostics.
+  a number called size is 'measure the instruction' with record and 'statement number' and false and 'what vas knows' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  If problem is not "" then, 'complain about the statement' with diagnostics and 'what vas knows' and record and problem, Return a number, 0.
+  If 'the instruction jumps' with record then, Return a number, size multiply {'the repetitions' of record and 'what vas knows' and diagnostics}.
+  a boolean called 'it waits on a later label' is 'expression answer''s "waits on a later label".
+  a boolean called 'it holds a value made of labels' is 'expression answer''s "holds a value made of labels".
+  If 'it waits on a later label' then, append 'statement number' to 'statements to settle'.
+  If not 'it waits on a later label' and 'it holds a value made of labels' then, append {0 subtract 'statement number'} to 'statements to settle'.
+  Return a number, size multiply {'the repetitions' of record and 'what vas knows' and diagnostics}.
+
+(The bytes one instruction takes, its values worked out with the labels as
+ they are placed now. What is wrong with it goes into the expression
+ answer's "problem", and the size answered is then 0.)
+To 'measure the instruction' with a map called record and a number called 'statement number' and a boolean called 'every label is placed' and a map called 'what vas knows' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer'.
+  a text called problem is 'work out the operands' with record and 'statement number' and 'every label is placed' and 'what vas knows' and 'expression answer'.
+  clear 'statement bytes'.
+  If problem is "" then, set problem to 'encode the record' with record and 0 and false and 'encoding table' and 'row mnemonics' and 'statement bytes'.
+  Set 'expression answer''s "problem" to problem.
+  If problem is not "" then, Return a number, 0.
+  Return a number, 'statement bytes''s size.
+
+(What each section can hold: .bss holds room and no bytes, so data and
+ instructions are refused there, and the note section holds nothing.)
+To 'check what the section holds' with a map called record and a number called 'statement kind' and a number called section and a number called size and a map called 'what vas knows' and a buffer called diagnostics.
+  If section is 'the stack note section' and size is greater than 0 then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the section .note.GNU-stack only marks the stack as not executable, and holds nothing", Return.
+  If section is not 'the zero-filled section' then, Return.
+  If 'statement kind' is 'a data statement' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the section .bss holds room and no bytes, so it cannot hold data; reserve the room with resb, resd or resq".
+  If 'statement kind' is 'an instruction statement' then, 'complain about the statement' with diagnostics and 'what vas knows' and record and "the section .bss holds room and no bytes, so it cannot hold an instruction".
+
+(--- Settling the sizes ----------------------------------------------------)
+
+(Pass one again, over only the statements whose size could still change,
+ now that every label has a place: each equ constant that waits on a label
+ is worked out, then each instruction that waited on a label is measured
+ again. If any size changed, the labels after it move, so every label is
+ placed again and the round runs again, this time measuring every
+ instruction that holds a value made of labels too, until a round changes
+ nothing.)
+To 'settle the sizes' with a list called statements and a map called 'what vas knows' and a list called 'the layout' and a list called 'section facts' and a list called 'labels in order' and a list called 'label statements' and a list called 'statements to settle' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called diagnostics.
+  If 'statements to settle''s length is 0 then, Return.
+  a number called round is 1.
+  a boolean called 'another round is needed' is true.
+  While 'another round is needed' and round is less than or equal to 'most rounds to settle',
+    set 'another round is needed' to 'settle one round' with round and statements and 'what vas knows' and 'the layout' and 'statements to settle' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and diagnostics,
+    if 'another round is needed' then, 'place the labels again' with 'what vas knows' and 'the layout' and 'section facts' and 'labels in order' and 'label statements'.
+    increment round.
+  a text called 'source name' is 'what vas knows''s "source path".
+  If 'another round is needed' then, complain with diagnostics and 'what vas knows' and 'source name' and 0 and "the sizes of the instructions do not settle after {'most rounds to settle'} rounds of measuring".
+
+(One round. Answers whether another is needed: when a size changed, or
+ when one equ constant got its value only after another, leaving one still
+ waiting that may now have what it needs.)
+To 'settle one round' with a number called round and a list called statements and a map called 'what vas knows' and a list called 'the layout' and a list called 'statements to settle' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called diagnostics.
+  a boolean called 'a constant got its value' is false.
+  a boolean called 'a constant still waits' is false.
+  a boolean called 'it may complain' is false.
+  If round is 1 then, set 'it may complain' to true.
+  For each 'entry number' from 1 to 'statements to settle''s length,
+    a number called 'statement number' is element 'entry number' of 'statements to settle',
+    a number called 'statement kind' is 0,
+    a boolean called 'it has its value' is false,
+    if 'statement number' is greater than 0 then, set 'statement kind' to 'the layout fact' with 'the layout' and 'statement number' and 'the kind slot'.
+    if 'statement kind' is 'a constant statement' then, set 'it has its value' to 'settle the constant' with 'statement number' and statements and 'it may complain' and 'what vas knows' and 'the layout' and 'expression answer' and diagnostics.
+    if 'statement kind' is 'a constant statement' and 'it has its value' then, set 'a constant got its value' to true.
+    if 'statement kind' is 'a constant statement' and not 'it has its value' then, set 'a constant still waits' to true..
+  a boolean called 'a size changed' is false.
+  For each 'entry number' from 1 to 'statements to settle''s length,
+    a number called 'statement number' is element 'entry number' of 'statements to settle',
+    a number called 'statement kind' is 0,
+    a boolean called 'its size changed' is false,
+    if 'statement number' is less than 0 and round is greater than 1 then, set 'statement number' to 0 subtract 'statement number'.
+    if 'statement number' is greater than 0 then, set 'statement kind' to 'the layout fact' with 'the layout' and 'statement number' and 'the kind slot'.
+    if 'statement kind' is 'an instruction statement' then, set 'its size changed' to 'settle the instruction' with 'statement number' and statements and 'what vas knows' and 'the layout' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer'.
+    if 'its size changed' then, set 'a size changed' to true..
+  If 'a size changed' then, Return a boolean, true.
+  If 'a constant got its value' and 'a constant still waits' then, Return a boolean, true.
+  Return a boolean, false.
+
+(An equ constant worked out again where it stands. Answers whether it now
+ has its value.)
+To 'settle the constant' with a number called 'statement number' and a list called statements and a boolean called 'it may complain' and a map called 'what vas knows' and a list called 'the layout' and a map called 'expression answer' and a buffer called diagnostics.
+  a map called record is element 'statement number' of statements.
+  a number called section is 'the layout fact' with 'the layout' and 'statement number' and 'the section slot'.
+  a number called offset is 'the layout fact' with 'the layout' and 'statement number' and 'the offset slot'.
+  'begin the statement' with record and section and offset and 'what vas knows'.
+  Return a boolean, 'work out the constant' with record and true and 'it may complain' and 'what vas knows' and 'expression answer' and diagnostics.
+
+(An instruction that is not a jump, measured again where it stands, its
+ instruction kind the only one on the list. Answers whether its size
+ changed. What is wrong with it was reported in pass one, or will be in
+ pass two, so here it only keeps the size it had.)
+To 'settle the instruction' with a number called 'statement number' and a list called statements and a map called 'what vas knows' and a list called 'the layout' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer'.
+  a map called record is element 'statement number' of statements.
+  a number called section is 'the layout fact' with 'the layout' and 'statement number' and 'the section slot'.
+  a number called offset is 'the layout fact' with 'the layout' and 'statement number' and 'the offset slot'.
+  a number called 'old size' is 'the layout fact' with 'the layout' and 'statement number' and 'the size slot'.
+  'begin the statement' with record and section and offset and 'what vas knows'.
+  a number called size is 'measure the instruction' with record and 'statement number' and true and 'what vas knows' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  If problem is not "" then, Return a boolean, false.
+  a boolean called 'it is known' is record's "repeat is constant".
+  a number called repetitions is record's "repeat count".
+  If not 'it is known' or repetitions is less than 0 then, Return a boolean, false.
+  Set size to size multiply repetitions.
+  If size is 'old size' then, Return a boolean, false.
+  'set the layout fact' with 'the layout' and 'statement number' and 'the size slot' and size.
+  Return a boolean, true.
+
+(Every statement's offset worked out again from the sizes, and every label
+ placed where its statement now stands. An align's padding depends on
+ where it stands, so it is worked out again too.)
+To 'place the labels again' with a map called 'what vas knows' and a list called 'the layout' and a list called 'section facts' and a list called 'labels in order' and a list called 'label statements'.
+  For each section from 1 to 'how many sections there are',
+    'set the fact about the section' with 'section facts' and section and 'the end fact' and 0.
+  a number called 'statement count' is 'the layout''s length divide 'slots per statement'.
+  For each 'statement number' from 1 to 'statement count',
+    a number called section is 'the layout fact' with 'the layout' and 'statement number' and 'the section slot',
+    a number called offset is 'the fact about the section' with 'section facts' and section and 'the end fact',
+    a number called 'statement kind' is 'the layout fact' with 'the layout' and 'statement number' and 'the kind slot',
+    'set the layout fact' with 'the layout' and 'statement number' and 'the offset slot' and offset,
+    if 'statement kind' is 'an align statement' then, 'set the layout fact' with 'the layout' and 'statement number' and 'the size slot' and {'the padding to the boundary' with offset and {'the layout fact' with 'the layout' and 'statement number' and 'the boundary slot'}}.
+    a number called size is 'the layout fact' with 'the layout' and 'statement number' and 'the size slot',
+    'set the fact about the section' with 'section facts' and section and 'the end fact' and {offset add size}.
+  For each 'label number' from 1 to 'labels in order''s length,
+    a text called 'full name' is element 'label number' of 'labels in order',
+    a number called 'statement number' is element 'label number' of 'label statements',
+    a number called section is 'the layout fact' with 'the layout' and 'statement number' and 'the section slot',
+    a number called offset is 'the layout fact' with 'the layout' and 'statement number' and 'the offset slot',
+    Set 'what vas knows''s "placed {full name}" to {section multiply 'section spacing'} add offset.
+
+(--- Placing the sections --------------------------------------------------)
+
+(voxelf places every section that holds anything, as ld drops an empty
+ one, and each label becomes an address. voxelf answers the sections in
+ the order of their kinds, text, read-only data, data and zero-filled,
+ which is the order they are asked in here, so each placed section is
+ known by its position: a name read back out of the list it answers would
+ come out of a map read out of a list, which is a text Vox no longer
+ compares by its characters (Vox bug #157). Answers how many errors voxelf
+ found.)
+To 'place the program' with a list called 'section facts' and a map called 'what vas knows' and a buffer called diagnostics.
+  a list called sections is [].
+  a list called 'sections asked for' is [].
+  For each section from 1 to 'the zero-filled section',
+    a number called size is 'the fact about the section' with 'section facts' and section and 'the end fact',
+    a number called alignment is 'the fact about the section' with 'section facts' and section and 'the alignment fact',
+    a text called 'section name' is 'the section name' of section,
+    a text called kind is 'the voxelf kind of the section' of section,
+    a map called request is {"name": 'section name', "kind": kind, "size": size, "alignment": alignment},
+    if size is greater than 0 then, append request to sections, append section to 'sections asked for'..
+  a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
+  a list called placed is 'place the sections' with sections and 'the load base' and diagnostics.
+  a number called errors is {'the number of diagnostics in' with diagnostics} subtract 'errors before'.
+  If errors is greater than 0 then, Return a number, errors.
+  For each 'placed section number' from 1 to placed's length,
+    a map called 'placed section' is element 'placed section number' of placed,
+    a number called address is 'placed section''s "address",
+    a number called section is element 'placed section number' of 'sections asked for',
+    'set the final base of the section' with section and address and 'what vas knows'.
+  Set 'what vas knows''s "addresses are final" to true.
+  Return a number, 0.
+
+(--- Pass two --------------------------------------------------------------)
+
+(Lay down every statement's bytes at its address, onto the image of its
+ section.)
+To 'lay down the program' with a list called statements and a map called 'what vas knows' and a list called 'the layout' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called 'text bytes' and a buffer called 'read-only bytes' and a buffer called 'data bytes' and a buffer called diagnostics.
+  For each 'statement number' from 1 to statements's length,
+    a map called record is element 'statement number' of statements,
+    'lay down the statement' with record and 'statement number' and 'what vas knows' and 'the layout' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and 'text bytes' and 'read-only bytes' and 'data bytes' and diagnostics.
+
+(One statement's bytes, laid down in the statement bytes and checked against
+ the size pass one measured before they join their section.)
+To 'lay down the statement' with a map called record and a number called 'statement number' and a map called 'what vas knows' and a list called 'the layout' and a list called 'encoding table' and a list called 'row mnemonics' and a buffer called 'statement bytes' and a map called 'expression answer' and a buffer called 'text bytes' and a buffer called 'read-only bytes' and a buffer called 'data bytes' and a buffer called diagnostics.
+  a number called 'statement kind' is 'the layout fact' with 'the layout' and 'statement number' and 'the kind slot'.
+  If 'statement kind' is 'a label statement' or 'statement kind' is 'a constant statement' or 'statement kind' is 'a directive statement' then, Return.
+  a number called section is 'the layout fact' with 'the layout' and 'statement number' and 'the section slot'.
+  a number called offset is 'the layout fact' with 'the layout' and 'statement number' and 'the offset slot'.
+  a number called size is 'the layout fact' with 'the layout' and 'statement number' and 'the size slot'.
+  If not 'the section holds bytes' of section then, Return.
+  'begin the statement' with record and section and offset and 'what vas knows'.
+  clear 'statement bytes'.
+  a text called problem is "".
+  If 'statement kind' is 'an align statement' then, Repeat size times, 'add the byte to' with 'the nop byte' and 'statement bytes'..
+  If 'statement kind' is 'a reservation statement' then, Repeat size times, 'add the byte to' with 0 and 'statement bytes'..
+  If 'statement kind' is 'a data statement' then, set problem to 'lay down the data' with record and 'what vas knows' and 'expression answer' and 'statement bytes'.
+  If 'statement kind' is 'an instruction statement' then, set problem to 'lay down the instruction' with record and 'statement number' and section and offset and 'what vas knows' and 'encoding table' and 'row mnemonics' and 'expression answer' and 'statement bytes'.
+  If problem is not "" then, 'complain about the statement' with diagnostics and 'what vas knows' and record and problem, Return.
+  a number called 'size laid down' is 'statement bytes''s size.
+  a text called mismatch is "".
+  Set mismatch to "internal error: pass two laid down {size laid down} bytes here, where pass one measured {size}".
+  If 'size laid down' is not size then, 'complain about the statement' with diagnostics and 'what vas knows' and record and mismatch, Return.
+  'append to the section' with section and 'statement bytes' and 'text bytes' and 'read-only bytes' and 'data bytes'.
+
+To 'append to the section' with a number called section and a buffer called piece and a buffer called 'text bytes' and a buffer called 'read-only bytes' and a buffer called 'data bytes'.
+  If section is 'the text section' then, append piece to 'text bytes', Return.
+  If section is 'the read-only section' then, append piece to 'read-only bytes', Return.
+  If section is 'the data section' then, append piece to 'data bytes'.
+
+(An instruction, as many times as a times prefix asks, each laid down at
+ its own address with $ standing there.)
+To 'lay down the instruction' with a map called record and a number called 'statement number' and a number called section and a number called offset and a map called 'what vas knows' and a list called 'encoding table' and a list called 'row mnemonics' and a map called 'expression answer' and a buffer called output.
+  a number called repetitions is record's "repeat count".
+  a number called base is 'the final base of the section' with section and 'what vas knows'.
+  For each repetition from 1 to repetitions,
+    a number called 'offset here' is offset add output's size,
+    Set 'what vas knows''s "current offset" to 'offset here',
+    a text called problem is 'work out the operands' with record and 'statement number' and true and 'what vas knows' and 'expression answer',
+    if problem is "" then, set problem to 'encode the instruction' with record and {base add 'offset here'} and 'encoding table' and 'row mnemonics' and output.
+    if problem is not "" then, Return a text, problem..
+  Return a text, "".
+
+(A data directive's items, as many times as a times prefix asks: a
+ string's bytes, padded with zeros to a whole number of units; a
+ floating-point number's eight bytes; and an expression's value in a unit,
+ lowest byte first.)
+To 'lay down the data' with a map called record and a map called 'what vas knows' and a map called 'expression answer' and a buffer called output.
+  a number called unit is record's "unit".
+  a number called repetitions is record's "repeat count".
+  a list called items is record's "items".
+  a text called problem is "".
+  Repeat repetitions times,
+    For each 'item number' from 1 to items's length,
+      a map called item is element 'item number' of items,
+      if problem is "" then, set problem to 'lay down the item' with item and unit and 'what vas knows' and 'expression answer' and output...
+  Return a text, problem.
+
+To 'lay down the item' with a map called item and a number called unit and a map called 'what vas knows' and a map called 'expression answer' and a buffer called output.
+  a text called kind is item's "kind".
+  a text called written is item's "text".
+  If kind is "string" then, 'lay down the string' with written and unit and output, Return a text, "".
+  If kind is "float" then, Return a text, 'lay down the floating-point number' with written and unit and 'expression answer' and output.
+  a boolean called 'it is known' is item's "is constant".
+  a number called value is item's "value".
+  If 'it is known' then, 'lay down the number' with value and unit and output, Return a text, "".
+  'work out the expression' with written and 'what vas knows' and 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is resolved' is 'expression answer''s "resolved".
+  a text called names is 'expression answer''s "names".
+  If not 'it is resolved' then, Return a text, 'the message for the names not defined' of names.
+  a number called 'worked out value' is 'expression answer''s "value".
+  'lay down the number' with 'worked out value' and unit and output.
+  Return a text, "".
+
+To 'lay down the string' with a text called written and a number called unit and a buffer called output.
+  a buffer called characters is "{written}".
+  a number called length is characters's size subtract 2.
+  For each position from 2 to {characters's size subtract 1},
+    'add the byte to' with {byte position of characters} and output.
+  a number called padding is {'the padded length' with length and unit} subtract length.
+  Repeat padding times, 'add the byte to' with 0 and output.
+
+To 'lay down the floating-point number' with a text called written and a number called unit and a map called 'expression answer' and a buffer called output.
+  a text called complaint is "".
+  Set complaint to "the floating-point number {written} needs dq, which holds the 8 bytes of a double".
+  If unit is not 8 then, Return a text, complaint.
+  Set 'expression answer''s "problem" to "".
+  a number called bits is 'the bits of the floating-point number' with written and 'expression answer'.
+  a text called problem is 'expression answer''s "problem".
+  If problem is not "" then, Return a text, problem.
+  'lay down the number' with bits and 8 and output.
+  Return a text, "".
+
+(--- Floating-point numbers ------------------------------------------------)
+
+(The bits of a floating-point number as NASM writes one in dq: a sign,
+ digits with a point, and an exponent after an e. Vox reads a decimal into
+ a float exactly as it reads the same literal, but reads no exponent
+ (LANGUAGE.md, Type Casting), so the exponent is first written out as
+ places of the point. The bits are then found by halving or doubling the
+ float into the range from 1 to 2, which a binary float does exactly.
+ What is wrong goes into the expression answer's "problem".)
+To 'the bits of the floating-point number' with a text called written and a map called 'expression answer'.
+  a buffer called characters is "{written}".
+  Create a buffer called digits.
+  a boolean called 'it is negative' is false.
+  a boolean called 'in the exponent' is false.
+  a number called 'digits before the point' is -1.
+  a number called exponent is 0.
+  a number called 'exponent sign' is 1.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if character is '-' and not 'in the exponent' then, set 'it is negative' to true.
+    if character is '-' and 'in the exponent' then, set 'exponent sign' to -1.
+    if character is '.' then, set 'digits before the point' to digits's size.
+    if character is 'e' or character is 'E' then, set 'in the exponent' to true.
+    if {'the byte is a digit' with character} and not 'in the exponent' then, 'add the byte to' with character and digits.
+    if {'the byte is a digit' with character} and 'in the exponent' then, set exponent to {exponent multiply 10} add {character subtract '0'}..
+  If 'digits before the point' is -1 then, set 'digits before the point' to digits's size.
+  a number called 'point position' is 'digits before the point' add {exponent multiply 'exponent sign'}.
+  a text called 'written out' is 'the digits with the point at' with digits and 'point position'.
+  a float called magnitude is 0.0.
+  a boolean called 'it reads as a float' is true.
+  Set magnitude to 'written out' as a float.
+  On error set 'it reads as a float' to false.
+  a text called complaint is "".
+  Set complaint to "the floating-point number {written} cannot be read as a double".
+  If not 'it reads as a float' then, Set 'expression answer''s "problem" to complaint, Return a number, 0.
+  a number called bits is 'the bits of the float' of magnitude.
+  If 'it is negative' then, set bits to bits bit-or {1 bit-shift-left 63}.
+  Return a number, bits.
+
+(Digits written out as a decimal with the point at this position, counting
+ from the start of the digits: zeros are added where the point stands
+ outside them.)
+To 'the digits with the point at' with a buffer called digits and a number called 'point position'.
+  Create a buffer called written.
+  a number called 'leading zeros' is 0 subtract 'point position'.
+  a number called 'trailing zeros' is 'point position' subtract digits's size.
+  If 'point position' is less than or equal to 0 then,
+    append "0." to written,
+    Repeat 'leading zeros' times, 'add the byte to' with '0' and written.
+    append digits to written.
+  If 'point position' is greater than 0 and 'point position' is less than digits's size then,
+    For each position from 1 to digits's size,
+      if position is 'point position' add 1 then, 'add the byte to' with '.' and written.
+      'add the byte to' with {byte position of digits} and written..
+  If 'point position' is greater than 0 and 'point position' is greater than or equal to digits's size then,
+    append digits to written,
+    Repeat 'trailing zeros' times, 'add the byte to' with '0' and written.
+    append ".0" to written.
+  a text called 'written out' is "{written}".
+  Return a text, 'written out'.
+
+(The IEEE 754 bits of a float that is not negative: the exponent found by
+ halving or doubling it into the range from 1 to 2, and the mantissa from
+ what is left above 1. A number too small for that range is a subnormal,
+ with an exponent field of 0.)
+To 'the bits of the float' of a float called magnitude.
+  a float called fraction is magnitude.
+  a number called 'binary exponent' is 0.
+  While fraction is greater than or equal to 2.0,
+    set fraction to fraction divide 2.0,
+    increment 'binary exponent'.
+  While fraction is less than 1.0 and 'binary exponent' is greater than 'the lowest normal float exponent',
+    set fraction to fraction multiply 2.0,
+    decrement 'binary exponent'.
+  a number called 'stored exponent' is 0.
+  a float called significand is fraction.
+  If fraction is greater than or equal to 1.0 then, set 'stored exponent' to 'binary exponent' add 'the float exponent bias', set significand to fraction subtract 1.0.
+  a number called mantissa is {significand multiply 'the float mantissa span'} as a number.
+  Return a number, {'stored exponent' bit-shift-left 52} bit-or mantissa.
+
+(--- Writing the executable ------------------------------------------------)
+
+(The section images joined into one image for voxelf, each section saying
+ where its bytes start in it and the address it was assembled for, which
+ voxelf checks against its own placing. Execution starts at _start.
+ Answers how many errors there were.)
+To 'write the program' with a list called 'section facts' and a map called 'what vas knows' and a buffer called 'text bytes' and a buffer called 'read-only bytes' and a buffer called 'data bytes' and a text called 'output path' and a buffer called diagnostics.
+  a text called 'source name' is 'what vas knows''s "source path".
+  a number called 'entry place' is 'what vas knows''s "placed _start".
+  If 'entry place' is less than or equal to 0 then, complain with diagnostics and 'what vas knows' and 'source name' and 0 and "the program has no label _start, where it would begin", Return a number, 1.
+  a number called 'entry section' is 'entry place' divide 'section spacing'.
+  a number called 'entry address' is {'entry place' modulo 'section spacing'} add {'the final base of the section' with 'entry section' and 'what vas knows'}.
+  a list called sections is [].
+  Create a buffer called image.
+  For each section from 1 to 'the zero-filled section',
+    a number called size is 'the fact about the section' with 'section facts' and section and 'the end fact',
+    a number called alignment is 'the fact about the section' with 'section facts' and section and 'the alignment fact',
+    a number called 'image offset' is image's size,
+    a number called address is 'the final base of the section' with section and 'what vas knows',
+    a text called 'section name' is 'the section name' of section,
+    a text called kind is 'the voxelf kind of the section' of section,
+    a map called placing is {"name": 'section name', "kind": kind, "size": size, "alignment": alignment, "image offset": 'image offset', "assembled address": address},
+    if size is greater than 0 then, 'add the section to the image' with section and image and 'text bytes' and 'read-only bytes' and 'data bytes', append placing to sections..
+  Return a number, 'write the executable and count the errors' with sections and image and 'entry address' and 'the load base' and 'output path' and diagnostics.
+
+To 'add the section to the image' with a number called section and a buffer called image and a buffer called 'text bytes' and a buffer called 'read-only bytes' and a buffer called 'data bytes'.
+  If section is 'the text section' then, append 'text bytes' to image.
+  If section is 'the read-only section' then, append 'read-only bytes' to image.
+  If section is 'the data section' then, append 'data bytes' to image.
+
+(Each problem the encoder found in its own table, one per line of the
+ problems it gives, as a complaint about the source being assembled, since
+ no instruction in it can be encoded until the table is read.)
+To 'complain about the encoding table' with a text called problems and a text called 'source path' and a map called 'what vas knows' and a buffer called diagnostics.
+  a buffer called characters is "{problems}".
+  Create a buffer called problem.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if character is not '\n' then, 'add the byte to' with character and problem.
+    if character is '\n' and problem's size is greater than 0 then, complain with diagnostics and 'what vas knows' and 'source path' and 0 and "the encoding table cannot be read: {problem}", clear problem..
+  If problem's size is greater than 0 then, complain with diagnostics and 'what vas knows' and 'source path' and 0 and "the encoding table cannot be read: {problem}".
+
+(--- The entries -----------------------------------------------------------)
+
+(The whole assembly, for a Vox caller: the front end, pass one, the
+ placing of the sections, pass two and the writing. The messages go into
+ the diagnostics buffer, and nothing is written unless there are none.
+ Answers how many errors there were.)
+To 'assemble the source' with a text called 'source path' and a text called 'coreasm directory' and a text called 'output path' and a buffer called diagnostics.
+  a map called 'what vas knows' is {}.
+  a list called statements is [].
+  a number called errors is 'read the source' with 'source path' and 'coreasm directory' and "" and 'what vas knows' and statements and diagnostics.
+  If errors is greater than 0 then, Return a number, errors.
+  a boolean called 'the stack is not executable' is 'what vas knows''s "stack is not executable".
+  If not 'the stack is not executable' then, complain with diagnostics and 'what vas knows' and 'source path' and 0 and "the source has no section .note.GNU-stack to say that the stack is not executable, and vas writes only executables whose stack is not", Return a number, 1.
+  a list called 'encoding table' is [].
+  a list called 'row mnemonics' is [].
+  a text called 'table problems' is 'prepare the encoder' with 'encoding table' and 'row mnemonics'.
+  If 'table problems' is not "" then, 'complain about the encoding table' with 'table problems' and 'source path' and 'what vas knows' and diagnostics, Return a number, 'what vas knows''s "errors".
+  Set 'what vas knows''s "source path" to 'source path'.
+  Set 'what vas knows''s "labels are placed" to true.
+  Set 'what vas knows''s "addresses are final" to false.
+  Set 'what vas knows''s "the layout is under test" to false.
+  Set 'what vas knows''s "relative by default from" to 0.
+  a list called 'the layout' is [].
+  a list called 'section facts' is [].
+  'start the section facts' with 'section facts'.
+  a list called 'labels in order' is [].
+  a list called 'label statements' is [].
+  a list called 'statements to settle' is [].
+  Create a buffer called 'statement bytes'.
+  a map called 'expression answer' is {"problem": "", "resolved": false, "fixed": false, "value": 0, "names": "", "waits on a later label": false, "holds a value made of labels": false}.
+  'measure the program' with statements and 'what vas knows' and 'the layout' and 'section facts' and 'labels in order' and 'label statements' and 'statements to settle' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and diagnostics.
+  Set errors to 'what vas knows''s "errors".
+  If errors is greater than 0 then, Return a number, errors.
+  'settle the sizes' with statements and 'what vas knows' and 'the layout' and 'section facts' and 'labels in order' and 'label statements' and 'statements to settle' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and diagnostics.
+  Set errors to 'what vas knows''s "errors".
+  If errors is greater than 0 then, Return a number, errors.
+  Set errors to 'place the program' with 'section facts' and 'what vas knows' and diagnostics.
+  If errors is greater than 0 then, Return a number, errors.
+  Create a buffer called 'text bytes'.
+  Create a buffer called 'read-only bytes'.
+  Create a buffer called 'data bytes'.
+  'lay down the program' with statements and 'what vas knows' and 'the layout' and 'encoding table' and 'row mnemonics' and 'statement bytes' and 'expression answer' and 'text bytes' and 'read-only bytes' and 'data bytes' and diagnostics.
+  Set errors to 'what vas knows''s "errors".
+  If errors is greater than 0 then, Return a number, errors.
+  Return a number, 'write the program' with 'section facts' and 'what vas knows' and 'text bytes' and 'read-only bytes' and 'data bytes' and 'output path' and diagnostics.
+
+(The path-based entry that answers the diagnostics: one per line, each
+ <file>:<line>: <message>, or the empty text when the executable was
+ written.)
+To 'assemble the file' of a text called 'source path' and a text called 'coreasm directory' and a text called 'output path'.
+  Create a buffer called diagnostics.
+  'assemble the source' with 'source path' and 'coreasm directory' and 'output path' and diagnostics.
+  a text called messages is "{diagnostics}".
+  Return a text, messages.
+
+(The path-based entry that answers the number of errors, and keeps the
+ messages of a failing call in <output path>.diagnostics for 'assembler
+ diagnostics', as 'expand file' does.)
+To 'assemble file counting errors' of a text called 'source path' and a text called 'coreasm directory' and a text called 'output path'.
+  Create a buffer called diagnostics.
+  a number called errors is 'assemble the source' with 'source path' and 'coreasm directory' and 'output path' and diagnostics.
+  a text called 'diagnostics path' is "".
+  Set 'diagnostics path' to "{output path}.diagnostics".
+  If errors is greater than 0 then, 'write the diagnostics file' with 'diagnostics path' and diagnostics, Return a number, errors.
+  If 'diagnostics path' is available then, Delete the file 'diagnostics path'.
+  Return a number, 0.
