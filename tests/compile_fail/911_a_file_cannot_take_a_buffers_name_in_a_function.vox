@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #155: inside a function, a file opened under a buffer
+ parameter's name, or under a top-level buffer's name, is refused as it is
+ for a number.)
+
+a buffer called cupboard is "ab".
+
+To 'stock up' with a buffer called shelf.
+    open a file called shelf for writing at "shelf.txt",
+    Close shelf.
+    Print "size {shelf's size}".
+
+To restock.
+    open a file called cupboard for writing at "cupboard.txt".
+    Close cupboard.
+
+'stock up' of cupboard.
+restock.

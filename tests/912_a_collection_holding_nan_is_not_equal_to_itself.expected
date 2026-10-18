@@ -1,0 +1,10 @@
+scalar: not equal
+a list and itself: not equal
+a list and a second list built the same way: not equal
+a list is not itself
+a nested list and itself: not equal
+a map and itself: not equal
+a list of ordinary values and itself: equal
+a map of ordinary values and itself: equal
+a list parameter and itself: not equal
+a list parameter and itself: equal

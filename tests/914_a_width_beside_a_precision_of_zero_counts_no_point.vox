@@ -1,0 +1,30 @@
+(docs/BUGS_FOUND.md #159: a width beside a precision of 0 counts no decimal
+ point, because none is printed, so every line is twelve characters wide in
+ every sink.)
+
+a number called n is 63.
+Print "[{n:012.0}]".
+Print "[{n:12.0}]".
+Print "[{n:012.1}]".
+Print "[{n:012}]".
+a float called f is 63.0.
+Print "[{f:012.0}]".
+Print "[{f:12.0}]".
+
+a text called padded is "[{n:012.0}] [{n:12.0}]".
+Print padded.
+a buffer called line is "[{n:012.0}]".
+append " [{n:12.0}]" to line.
+Print line.
+
+a list called sizes is [63, "sixty-three"].
+Print "[{element 1 of sizes:012.0}]".
+a value called size is 63.
+Print "[{size:12.0}]".
+
+To 'show the size' with a number called count.
+    Print "[{count:012.0}]".
+    a text called shown is "[{count:12.0}]".
+    Print shown.
+
+'show the size' with 63.

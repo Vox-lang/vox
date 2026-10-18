@@ -2933,6 +2933,25 @@ Otherwise, a number called s is 1, append s to out.\n";
         assert_eq!(fault, None);
     }
 
+    /// docs/BUGS_FOUND.md #161. A width of zero is a width, so it composes
+    /// with a precision too: `0.2`, `00.2` and `0.0` are a width of zero
+    /// and a precision, not an unknown specifier.
+    #[test]
+    fn a_zero_width_written_with_a_precision_keeps_both_halves() {
+        for (written, places) in [("0.2", 2), ("00.2", 2), ("0.0", 0)] {
+            let (spec, fault) = super::read_format_spec(Some(written));
+            assert_eq!(spec.width, Some(0), "{}", written);
+            assert_eq!(spec.precision, Some(places), "{}", written);
+            assert_eq!(fault, None, "{}", written);
+        }
+        let (_, fault) = super::read_format_spec(Some("0.2z"));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::UnknownSpecifier("0.2z".to_string())),
+            "a bad precision after a zero width is refused as after any width"
+        );
+    }
+
     /// A count past the limit is still a count fault, on whichever half
     /// wrote it - the pair being legal does not make a 20-digit precision
     /// renderable (#61's rule, unchanged).

@@ -2098,7 +2098,12 @@ explicitly:  a {} called {} is {} as {}.",
     ///
     /// Exempt exactly like `check_type_lock`: `value`-typed names (the
     /// sanctioned dynamic mechanism) and buffers (binding into a buffer is
-    /// a content write, not a type change).
+    /// a content write, not a type change). A file is the exception to the
+    /// exemption: opening or declaring a file writes nothing into a buffer,
+    /// and a `value` never holds a file, so a file bound to either name
+    /// would change the name's type (docs/BUGS_FOUND.md #155). At the top
+    /// level that holds once the buffer or `value` is declared: a file
+    /// opened above the declaration is a variable of its own.
     pub(crate) fn bind_variable_type(
         &mut self,
         name: &str,
@@ -2108,10 +2113,21 @@ explicitly:  a {} called {} is {} as {}.",
         patterns: &[String],
         guard_against_called: bool,
     ) -> bool {
-        if self.value_typed_names.contains(name) || self.is_buffer_variable(name) {
+        // A name that is already a file here is opened again, which is no
+        // change of type, even where a buffer of the same name is declared
+        // further down.
+        let binds_a_file = matches!(new_type, Type::File)
+            && !self.file_variables.contains(name)
+            && (self.in_function_scope || self.is_variable_available(name));
+        if !binds_a_file && (self.value_typed_names.contains(name) || self.is_buffer_variable(name)) {
             return false;
         }
-        let Some(declared) = self.named_value_type(name) else {
+        let declared = if self.value_typed_names.contains(name) {
+            Some(Type::Value)
+        } else {
+            self.named_value_type(name)
+        };
+        let Some(declared) = declared else {
             // A brand-new name: this binding is the declaration.
             if matches!(new_type, Type::Integer | Type::Float | Type::Boolean | Type::String) {
                 self.scalar_types.insert(name.to_string(), new_type);

@@ -1193,11 +1193,10 @@ _slot_equal:
 ; other empty list.
 global _list_equal
 _list_equal:
-    cmp rdi, rsi
-    jne .list_equal_walk
-    mov rax, 1
-    ret
-.list_equal_walk:
+    ; A list is not equal to itself without looking: one holding a float
+    ; that is not equal to itself (a nan) is unequal to every list, itself
+    ; included, so even the same list is compared entry by entry
+    ; (docs/BUGS_FOUND.md #162).
     push rbx
     push r12
     push r13

@@ -368,8 +368,8 @@ impl CodeGenerator {
         // A width beside the precision pads the DIGITS, so the whole
         // `<digits>.<zeros>` rendering reaches the width the author asked
         // for - the same arithmetic Print's twin does, so the two sinks
-        // agree (docs/BUGS_FOUND.md #85).
-        let digit_width = fmt.width.map(|w| w - 1 - places).unwrap_or(0);
+        // agree (docs/BUGS_FOUND.md #85, #159).
+        let digit_width = fmt.width.map(|w| w.saturating_sub(super::format::decimal_places_length(places))).unwrap_or(0);
         let leading = FormatSpec {
             width: if digit_width > 0 { Some(digit_width) } else { None },
             zero_pad: fmt.zero_pad && digit_width > 0,

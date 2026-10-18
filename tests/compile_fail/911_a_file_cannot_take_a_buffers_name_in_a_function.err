@@ -1,0 +1,2 @@
+cannot bind 'shelf' to a file in this open statement; 'shelf' is already declared as a buffer
+cannot bind 'cupboard' to a file in this open statement; 'cupboard' is already declared as a buffer

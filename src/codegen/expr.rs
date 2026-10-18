@@ -2013,31 +2013,32 @@ impl CodeGenerator {
                     self.generate_expr(value);
                     self.emit_indent("push rax  ; save original value (struct ptr if buffer)");
 
+                    // The match is worked out before any register is loaded
+                    // for the comparison: a format string as the match calls
+                    // the runtime to build its text, which would overwrite
+                    // them (docs/BUGS_FOUND.md #158). The subject waits on
+                    // the stack.
+                    self.generate_expr(match_value);
                     if is_buffer {
                         // Get length and data pointer from struct - avoid NUL-scanning
                         // stale bytes (same fix applied to all other buffer comparisons)
-                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent("push rax  ; the match");
+                        self.emit_indent("mov rdi, [rsp+8]  ; the buffer");
                         self.emit_indent("call _buffer_length");
-                        self.emit_indent("mov rdx, rax  ; len1");
-                        self.emit_indent("mov rdi, [rsp]");
+                        self.emit_indent("push rax  ; len1");
+                        self.emit_indent("mov rdi, [rsp+16]  ; the buffer");
                         self.emit_indent("call _buffer_data");
-                        self.emit_indent("mov rdi, rax  ; ptr1 = data");
-                        self.generate_expr(match_value);
-                        self.emit_indent("mov rsi, rax  ; ptr2 = match");
-                        self.emit_indent("push rdi");
-                        self.emit_indent("push rsi");
-                        self.emit_indent("push rdx");
-                        self.emit_indent("mov rdi, rsi");
+                        self.emit_indent("push rax  ; ptr1 = data");
+                        self.emit_indent("mov rdi, [rsp+16]  ; the match");
                         self.emit_indent("call _str_len");
                         self.emit_indent("mov rcx, rax  ; len2");
-                        self.emit_indent("pop rdx");
-                        self.emit_indent("pop rsi");
-                        self.emit_indent("pop rdi");
+                        self.emit_indent("pop rdi  ; ptr1 = data");
+                        self.emit_indent("pop rdx  ; len1");
+                        self.emit_indent("pop rsi  ; ptr2 = match");
                         self.emit_indent("call _mem_eq");
                     } else {
-                        self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
-                        self.generate_expr(match_value);
                         self.emit_indent("mov rsi, rax  ; match value in rsi");
+                        self.emit_indent("mov rdi, [rsp]  ; comparison ptr in rdi");
                         self.emit_indent("call _str_eq");
                     }
                     self.emit_indent("test rax, rax");

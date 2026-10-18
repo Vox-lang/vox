@@ -1,0 +1,39 @@
+(docs/BUGS_FOUND.md #162: a list or a map holding a float that is not equal
+ to itself is unequal to every list or map, itself included. The manual has
+ no nan literal, so one is made by subtracting an overflowed float from
+ itself.)
+
+a float called huge is 1000000000000.0.
+Repeat 5 times, set huge to huge multiply huge.
+a float called unordered is huge subtract huge.
+If unordered is unordered then, Print "scalar: equal".
+Otherwise, Print "scalar: not equal"..
+
+a list called xs is [unordered].
+a list called zs is [unordered].
+If xs is xs then, Print "a list and itself: equal".
+Otherwise, Print "a list and itself: not equal"..
+If xs is zs then, Print "a list and a second list built the same way: equal".
+Otherwise, Print "a list and a second list built the same way: not equal"..
+If xs is not xs then, Print "a list is not itself".
+
+a list called nested is [1, [unordered]].
+If nested is nested then, Print "a nested list and itself: equal".
+Otherwise, Print "a nested list and itself: not equal"..
+
+a map called gauge is {"level": 1.5}.
+Set gauge's "level" to unordered.
+If gauge is gauge then, Print "a map and itself: equal".
+Otherwise, Print "a map and itself: not equal"..
+
+a list called plain is [1.5, "two"].
+If plain is plain then, Print "a list of ordinary values and itself: equal".
+a map called settled is {"level": 1.5}.
+If settled is settled then, Print "a map of ordinary values and itself: equal".
+
+To 'compare with itself' with a list called readings.
+    If readings is readings then, Print "a list parameter and itself: equal".
+    Otherwise, Print "a list parameter and itself: not equal"..
+
+'compare with itself' of xs.
+'compare with itself' of plain.

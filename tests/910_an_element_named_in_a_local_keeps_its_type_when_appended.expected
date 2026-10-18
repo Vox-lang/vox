@@ -1,0 +1,13 @@
+["alpha", {"name": ".text", "size": 10}, "beta", {"size": 4}, [1, 2], 2.5, 1]
+Text (dynamic)
+Map (dynamic)
+Text (dynamic)
+Map (dynamic)
+List (dynamic)
+Float (dynamic)
+Boolean (dynamic)
+["gamma", [3]]
+[{"size": 4}, [1, 2], "beta"]
+Map (dynamic)
+List (dynamic)
+Text (dynamic)

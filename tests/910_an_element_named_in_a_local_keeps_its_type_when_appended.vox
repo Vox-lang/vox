@@ -1,0 +1,54 @@
+(docs/BUGS_FOUND.md #156: an element of a list parameter, named in a local
+ and then appended, keeps its own type, whatever the top-level list that
+ shares the parameter's name holds.)
+
+To 'copy each kind' with a list called shelf and a list called placed.
+    a text called word is element 1 of shelf.
+    append word to placed.
+    a map called section is element 2 of shelf.
+    append section to placed.
+    a list called pair is element 3 of shelf.
+    append pair to placed.
+    a float called weight is element 4 of shelf.
+    append weight to placed.
+    a boolean called ready is element 5 of shelf.
+    append ready to placed.
+
+To 'copy a name' with a list called names and a list called placed.
+    a text called name is element 1 of names.
+    append name to placed.
+
+To 'copy a section' with a list called sections and a list called placed.
+    a map called section is element 1 of sections.
+    append section to placed.
+
+a list called names is ["alpha"].
+a list called sections is [{"name": ".text", "size": 10}].
+a list called shelf is ["beta", {"size": 4}, [1, 2], 2.5, true].
+a list called placed is [].
+'copy a name' with names and placed.
+'copy a section' with sections and placed.
+'copy each kind' with shelf and placed.
+Print "{placed}".
+For each item in placed, print item's type.
+
+To 'copy a later name' with a list called words and a list called kept.
+    a text called word is element 1 of words.
+    append word to kept.
+    a list called pair is element 2 of words.
+    append pair to kept.
+
+a list called words is ["gamma", [3]].
+a list called kept is [].
+'copy a later name' with words and kept.
+Print "{kept}".
+
+a map called stock is element 2 of shelf.
+a list called held is element 3 of shelf.
+a text called label is element 1 of shelf.
+a list called gathered is [].
+append stock to gathered.
+append held to gathered.
+append label to gathered.
+Print "{gathered}".
+For each item in gathered, print item's type.

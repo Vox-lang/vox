@@ -296,6 +296,14 @@ impl CodeGenerator {
                     let saved_env = env.clone();
                     let saved_list_seen_tags = list_seen_tags.clone();
                     let saved_mixed = self.mixed_lists.clone();
+                    // A list parameter is not the top-level list it may share
+                    // a name with: nothing is proven about the elements of
+                    // the list the caller hands it (docs/BUGS_FOUND.md #156).
+                    for (param, param_type) in params {
+                        if matches!(param_type, Type::List(_)) {
+                            list_seen_tags.remove(param);
+                        }
+                    }
                     self.prescan_walk(body, env, list_seen_tags);
                     // The function's own locals: its parameters plus any names
                     // the body walk newly introduced into `env` (VarDecl
@@ -1328,8 +1336,9 @@ impl CodeGenerator {
 
     /// Leave 1 in rax when the two sides are equal, else 0 (`negated` flips
     /// it). When either side's tag says list or map, the two compare by
-    /// their contents, as two lists or two maps do; otherwise their payloads
-    /// compare as before.
+    /// their contents, as two lists or two maps do. Two texts compare by
+    /// their characters, and a text is never equal to anything else
+    /// (docs/BUGS_FOUND.md #157); otherwise their payloads compare as before.
     pub(crate) fn emit_tagged_collection_equality(&mut self, left: &Expr, right: &Expr, negated: bool) {
         self.collection_equality_routine(&Type::List(Box::new(Type::Unknown)));
         let by_contents = self.new_label("eq_by_contents");
@@ -1349,12 +1358,25 @@ impl CodeGenerator {
             self.emit_indent(&format!("cmp {}, {}", register, tag));
             self.emit_indent(&format!("je {}", by_contents));
         }
+        let left_not_text = self.new_label("eq_left_not_text");
+        let not_equal = self.new_label("eq_not_equal");
+        self.emit_indent(&format!("cmp edx, {}  ; is the left-hand side a text?", TAG_STRING));
+        self.emit_indent(&format!("jne {}", left_not_text));
+        self.emit_indent(&format!("cmp ecx, {}", TAG_STRING));
+        self.emit_indent(&format!("je {}  ; two texts compare by their characters", by_contents));
+        self.emit_indent(&format!("jmp {}", not_equal));
+        self.emit(&format!("{}:", left_not_text));
+        self.emit_indent(&format!("cmp ecx, {}", TAG_STRING));
+        self.emit_indent(&format!("je {}  ; a text against something else", not_equal));
         self.emit_indent("xor eax, eax  ; neither holds a collection: the payloads compare");
         self.emit_indent("cmp rdi, rsi");
         self.emit_indent("sete al");
         self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", not_equal));
+        self.emit_indent("xor eax, eax");
+        self.emit_indent(&format!("jmp {}", done));
         self.emit(&format!("{}:", by_contents));
-        self.emit_indent("call _slot_equal  ; a list or a map compares by its contents");
+        self.emit_indent("call _slot_equal  ; a list, a map or a text compares by its contents");
         self.emit(&format!("{}:", done));
         if negated {
             self.emit_indent("xor rax, 1  ; 1=equal -> 0=not equal");

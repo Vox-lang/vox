@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #155: a file opened again under its own name is no change
+ of type, even when a buffer of that name is declared further down, after the
+ branch the file lives in.)
+a number called gate is 1.
+If gate is 1 then,
+  open a file called cupboard for writing at "/dev/null",
+  Close cupboard,
+  open a file called cupboard for reading at "/dev/null",
+  Print "reopened: {cupboard's readable}",
+  Close cupboard.
+a buffer called cupboard is 65 bytes in size.
+Print "size {cupboard's size}, capacity {cupboard's capacity}".
