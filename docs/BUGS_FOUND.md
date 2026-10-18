@@ -2,7 +2,7 @@
 
 The register holds one entry per root cause: every defect in the compiler that is open today, and an index of every entry ever filed. A fixed entry keeps its number and moves, unchanged, to the archive of the release that fixed it, in [docs/bugs/](bugs/); a report that turned out not to be a compiler defect moves to [docs/bugs/not-bugs.md](bugs/not-bugs.md). The regression test each fix added, named in its entry, stays in the compiler's test suite.
 
-**Open entries: 8.** Wrong output on valid input: 6. Accepted invalid input: 0. Spurious compile error: 1. Crash: 1. Assembler rejected output: 0. Hang: 0.
+**Open entries: 12.** Wrong output on valid input: 5. Accepted invalid input: 0. Spurious compile error: 5. Crash: 2. Assembler rejected output: 0. Hang: 0.
 
 ## How an entry enters the register
 
@@ -16,304 +16,503 @@ By class, in this order: `wrong output on valid input`, `accepted invalid input`
 
 ## Open entries
 
-### 156. An element of a list parameter named in a local, then appended, prints an address
+### 164. A hole naming a parameter called 'the text' as `{the text}` prints a stray value
 
 **Reproducer:**
 
 ```vox
-To 'copy over' with a list called sections and a list called placed.
-    a map called section is element 1 of sections.
-    append section to placed.
+To 'show' with a text called 'the text'.
+  Print "hole: {the text}".
 
-a list called sections is [{"name": ".text", "size": 10}].
-a list called placed is [].
-'copy over' with sections and placed.
-Print "{placed}".
+'show' of "hello".
 ```
 
-- **Expected:** `[{"name": ".text", "size": 10}]`.
+- **Expected:** `hole: hello`, or a compile error if the hole cannot name this parameter.
 - **Actual:**
 
 ```text
-$ vox copy_over.vox -o copy_over && ./copy_over
-[140602820956160]
+$ vox the_text_hole.vox -o the_text_hole && ./the_text_hole
+hole: 6
 ```
 
-The same with a text, `a text called name is element 1 of names.` then `append name to placed.`, prints `[4198561]` where `["alpha"]` is expected. Naming the element of a list declared at the top level, rather than a list parameter, and appending it stores the right element.
+The value printed is not the parameter's. The same hole with the parameter renamed (`'some words'` and `{some words}`) prints `hole: hello`, and so does `{'the text'}` with the single quotes written in the hole. Only a name that begins with `the` is affected.
 
 **Class:** wrong output on valid input.
 
-**Phase:** not yet told.
+**Phase:** codegen.
 
-**Claims:** LANGUAGE.md "Mixed-Type Lists": "Appending, `set element`, `element N of`, `first`/`last`, iteration, and `{...}` format interpolation all respect each element's actual type." LANGUAGE.md "A collection parameter is the caller's collection": a `list` parameter names the caller's collection, so what the function reads from it is what the caller's list holds.
+**Claims:** LANGUAGE.md "Format Strings": "Embed variables and expressions directly in strings using curly braces `{}`", and a hole prints the value of the variable it names. LANGUAGE.md "Parameter and Local Types": "a typed parameter supports the same properties and operations as a top-level variable of that type". A multi-word name is written bare in a hole (`print "line {line number}",` in "Sentence Consumption").
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 157. Two `value`s holding equal texts compare not equal
+### 165. Appending an untyped call's result to a buffer writes an address
 
 **Reproducer:**
 
 ```vox
-a value called word is "ab".
-a value called 'same word' is "{word}".
-If word is 'same word' then, Print "word is same word".
-Otherwise, Print "word is not same word"..
+To 'untyped' of a text called word. Return "{word}?".
+a buffer called other is 64 bytes in size.
+append 'untyped' of "x" to other.
+Print "top: {other}".
 ```
 
-- **Expected:** `word is same word`. Both `value`s hold the text `ab`.
+- **Expected:** a compile error, as `append` of the same call to a list gives: the function has no declared return type, so its result has nothing to be read as.
 - **Actual:**
 
 ```text
-$ vox value_equal.vox -o value_equal && ./value_equal
-word is not same word
+$ vox untyped_append.vox -o untyped_append && ./untyped_append
+top: 139743229972512
 ```
 
-Two texts declared as `text` and holding the same characters compare equal.
+The program compiles without a message and the buffer holds the digits of an address. The same function with `Return a text, "{word}?".` appends `x?`.
 
 **Class:** wrong output on valid input.
 
-**Phase:** not yet told.
+**Phase:** analysis.
 
-**Claims:** LANGUAGE.md "Comparisons": "compare two texts with `is`", and "Equality (`is`, `is equal to`, `is not`) takes a `value` as it is". A `value` that holds a text is compared as that text.
+**Claims:** LANGUAGE.md "Reading a result": "A result with **no** declared return type has nothing to be read as, and the compiler will not guess: it is accepted only where the position itself supplies the type, and refused where nothing does." The positions that need the return type declared include `append`.
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 158. A format string as the match of `treating` never fires over a text list
+### 166. A text from `arguments's all`, named in a local and appended to a list, is stored as an address
 
 **Reproducer:**
 
 ```vox
-a text called word is "kiwi".
-print each name from ["kiwi"] treating "{word}" as "matched".
-print each name from ["kiwi"] treating word as "matched".
+a list called kept is [].
+a list called given is arguments's all.
+a text called word is element 1 of given.
+append word to kept.
+Print "word: {word}, kept: {kept}".
 ```
 
-- **Expected:** `matched` on both lines. `"{word}"` is the text `kiwi`, the same as `word`.
+- **Expected:** with the argument `hello`, `word: hello, kept: ["hello"]`.
 - **Actual:**
 
 ```text
-$ vox treating_format.vox -o treating_format && ./treating_format
-kiwi
-matched
+$ vox arguments_kept.vox -o arguments_kept && ./arguments_kept hello
+word: hello, kept: [140729249601978]
 ```
 
-The format string as the match fires over a mixed list, and `treating word as` fires over the text list. The compiler gives no mismatch message.
+`word` prints correctly; the list holds the address of its characters. This is the family of #156 (an element named in a local, then appended) and of #23 (a list of `arguments's all` elements).
 
 **Class:** wrong output on valid input.
 
-**Phase:** not yet told.
+**Phase:** codegen.
 
-**Claims:** LANGUAGE.md "Format Strings Everywhere": "Every statement that takes a string value accepts a format string: ... `treating` clauses". LANGUAGE.md "Inline Substitution with `treating`": "If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration."
+**Claims:** LANGUAGE.md "Mixed-Type Lists": "Appending, `set element`, `element N of`, `first`/`last`, iteration, and `{...}` format interpolation all respect each element's actual type."
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 159. A width with `.0` on a whole number is one character short
+### 167. A loop variable over a returned list, cast as a number, gives the text's address
 
 **Reproducer:**
 
 ```vox
-a number called n is 63.
-Print "[{n:012.0}]".
-Print "[{n:12.0}]".
-Print "[{n:012.1}]".
-Print "[{n:012}]".
+To 'the rows'.
+    a list called rows is [].
+    a buffer called digits is "12".
+    a text called row is digits as text.
+    append row to rows.
+    Return a list, rows.
+
+a list called got is 'the rows'.
+For each row in got,
+    a number called parsed is row as a number,
+    Print parsed.
 ```
 
-- **Expected:** twelve characters between the brackets on every line: `[000000000063]`, `[          63]`, `[0000000063.0]` and `[000000000063]`.
+- **Expected:** `12`.
 - **Actual:**
 
 ```text
-$ vox width_point_zero.vox -o width_point_zero && ./width_point_zero
-[00000000063]
-[         63]
-[0000000063.0]
-[000000000063]
+$ vox rows_as_number.vox -o rows_as_number && ./rows_as_number
+140653719011360
 ```
-
-The first two lines are eleven characters wide. `{n:012.1}`, `{n:012}` and, on a float, `{f:08.0}` are the right width.
 
 **Class:** wrong output on valid input.
 
-**Phase:** not yet told.
+**Phase:** codegen.
 
-**Claims:** LANGUAGE.md "Format Specifiers": "`{var:N}` pads out to `N` characters", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters. The precision decides the digits and the width decides the padding, on a number and a float alike."
+**Claims:** LANGUAGE.md "Type Casting": a `text` cast `as a number` gives the number the text spells (`"123" as a number` is `123`). LANGUAGE.md "Mixed-Type Lists": every element "prints and reads back as what it is".
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 160. After an `Otherwise`, one closing period is lost
+### 168. A `Library` line arriving through `see` silently renames the library
 
-**Reproducer:**
+**Reproducer:** two files. `outer.vox`:
 
 ```vox
-For each number from 1 to 2,
-    If the number is 1 then, Print "one".
-    Otherwise, Print "two"..
-Print "after the loop".
+Library 'outer' version "0.1".
+
+see "./inner.vox".
+
+To 'outer answer'.
+  Return a number, 'inner answer' add 1.
 ```
 
-- **Expected:** `one`, `two`, `after the loop`. The period after `"two"` closes the `Otherwise`, which ends the `If` chain, and the second period closes the `For each`.
+and `inner.vox`, beside it:
+
+```vox
+Library 'inner' version "0.1".
+
+To 'inner answer'.
+  Return a number, 41.
+```
+
+- **Expected:** a compile error naming both `Library` lines, because one library cannot have two identities.
 - **Actual:**
 
 ```text
-$ vox otherwise_periods.vox -o otherwise_periods && ./otherwise_periods
-one
-after the loop
-two
-after the loop
+$ vox outer.vox --shared -o libouter.so
+$ nm -D --defined-only libouter.so
+00000000000003b9 T inner_0_1_inner_answer
+00000000000003d0 T inner_0_1_outer_answer
+$ cat libouter.lib
+Library inner version "0.1".
+Location "./libouter.so".
+
+Table of Contents:
+    To 'inner answer', returning a number.
+    To 'outer answer', returning a number.
 ```
 
-The second period closes nothing, so `Print "after the loop".` is read inside the loop body. The manual's own example of an empty `Otherwise,.` closing a chain needs the same extra period. `then, X..` and `But if ..., X..` close two levels correctly.
+The build succeeds without a message, and `outer.vox`'s own `Library 'outer'` line is lost: the library is exported as `inner`, under the name and version of the included file.
 
 **Class:** wrong output on valid input.
 
-**Phase:** not yet told.
+**Phase:** analysis.
 
-**Claims:** LANGUAGE.md "The termination rule": "A period ends the innermost open clause ... One period closes one level; to close more than one, write more than one". LANGUAGE.md "Closing more than one level": "periods stack: write one period per level you want to close", and "An empty `Otherwise,.` closes an inner chain the same way".
-
-**Pile:** manual says X, compiler does Y.
-
-**Hits:** 1, first and last seen 2026-10-17.
-
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Root cause not yet investigated.
-
----
-
-### 162. A list holding `nan` is equal to itself
-
-**Reproducer:** the manual has no `nan` literal. A `nan` is made here by subtracting a float that has overflowed from itself.
-
-```vox
-a float called huge is 1000000000000.0.
-Repeat 5 times, set huge to huge multiply huge.
-a float called unordered is huge subtract huge.
-If unordered is unordered then, Print "scalar: equal".
-Otherwise, Print "scalar: not equal"..
-a list called xs is [unordered].
-a list called zs is [unordered].
-If xs is xs then, Print "a list and itself: equal".
-Otherwise, Print "a list and itself: not equal"..
-If xs is zs then, Print "a list and a second list built the same way: equal".
-Otherwise, Print "a list and a second list built the same way: not equal"..
-```
-
-- **Expected:** `scalar: not equal`, `a list and itself: not equal`, `a list and a second list built the same way: not equal`. A list is equal when each element equals the element in the same place, and a `nan` does not equal itself.
-- **Actual:**
-
-```text
-$ vox nan_list.vox -o nan_list && ./nan_list
-scalar: not equal
-a list and itself: equal
-a list and a second list built the same way: not equal
-```
-
-A list holding `nan` answers differently for the same list and for an identical one, as if the same list were not compared element by element.
-
-**Class:** wrong output on valid input.
-
-**Phase:** not yet told.
-
-**Claims:** LANGUAGE.md "Comparisons": "Two lists are equal when they have the same length and each element equals the element in the same place, nested lists and maps included". A float that is not equal to itself makes any list holding it unequal to every list, itself included.
+**Claims:** LANGUAGE.md "Mangling": every exported function is mangled to `<library>_<version>_<func>`. LANGUAGE.md "Writing a library": "**A library needs an identity.** The `Library` declaration gives the library the name and version that drive mangling and the `.lib`."
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Decided under LANGUAGE.md's element-by-element rule on 2026-10-17.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 161. `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused
+### 169. A shared library cannot use another library's `.lib`
 
-**Reproducer:**
+**Reproducer:** `inner.vox`, built first with `vox inner.vox --shared -o libinner.so` (which writes `libinner.lib` beside it):
 
 ```vox
-a number called n is 63.
-Print "{n:0.2}".
+Library 'inner' version "0.1".
+
+To 'inner answer'.
+  Return a number, 41.
 ```
 
-- **Expected:** the program prints `63.00`. A width may be zero and composes with a precision.
+and `outer.vox`, beside them:
+
+```vox
+Library 'outer' version "0.1".
+see 'inner' version "0.1" from "libinner.lib".
+
+To 'outer answer'.
+  Return a number, 'inner answer' add 1.
+```
+
+- **Expected:** `libouter.so` builds and its `outer answer` calls the inner library.
 - **Actual:**
 
 ```text
-$ vox zero_width_precision.vox -o zero_width_precision
-error: '0.2' is not a format specifier Vox knows
-  --> zero_width_precision.vox:2:11
+$ vox outer.vox --shared -o libouter.so
+/usr/bin/ld.bfd: outer.o: warning: relocation against `inner_0_1_inner_answer' in read-only section `.text'
+/usr/bin/ld.bfd: outer.o: relocation R_X86_64_PC32 against symbol `inner_0_1_inner_answer' can not be used when making a shared object; recompile with -fPIC
+/usr/bin/ld.bfd: final link failed: bad value
+Linking failed
 ```
 
-`{n:00.2}` and `{n:0.0}` are refused the same way. `{n:0}`, `{n:00}` and `{n:1.2}` are accepted.
+A program that `see`s the same `.lib` links and runs.
 
 **Class:** spurious compile error.
 
-**Phase:** analysis (the message comes from the format specifier check).
+**Phase:** codegen.
 
-**Claims:** LANGUAGE.md "Format Specifiers": "A width may be zero - `{var:0}` and `{var:00}` pad nothing", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters."
+**Claims:** LANGUAGE.md "Writing a library": "The runtime is position-independent, so a library may use the full core language (arithmetic, printing, buffers, files, floats, lists, maps), not a runtime-free subset." LANGUAGE.md "Consuming a library": "`see` of a `.lib` is the consumption path."
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
 
 ---
 
-### 155. A file opened in a branch under a top-level buffer's name segfaults
+### 170. Whether a local can shadow a global depends on where the function is
 
 **Reproducer:**
 
 ```vox
-a buffer called cupboard is "ab".
-a number called gate is 1.
-If gate is 1 then,
-    open a file called cupboard for writing at "cupboard.txt",
-    Close cupboard.
-Print "size {cupboard's size}".
+a number called g is 1.
+
+To 'shadow it'.
+  a text called g is "five".
+  Print "inside: {g}".
+
+'shadow it'.
 ```
 
-- **Expected:** a compile error, because the name is already a buffer and a file cannot be bound to it.
+- **Expected:** `inside: five`. The local `g` is a text and shadows the global number.
 - **Actual:**
 
 ```text
-$ vox file_over_buffer.vox -o file_over_buffer && ./file_over_buffer
-size Segmentation fault         (core dumped)
+$ vox shadow_by_position.vox -o shadow_by_position
+error: cannot bind 'g' to text in this declaration; 'g' is already declared as a number
+  --> shadow_by_position.vox:4:17
+    |
+  4 |   a text called g is "five".
+    |                 ^ this declares as text
 ```
 
-The program compiles without a message and stops on a signal at the read of `cupboard`.
+With the function written above `a number called g is 1.` the same local is accepted and prints `inside: five`, and the global stays `1`. A local of the global's own type (`a number called g is 5.` inside the function) is accepted in both positions.
 
-**Class:** crash.
+**Class:** spurious compile error.
 
-**Phase:** not yet told.
+**Phase:** analysis.
 
-**Claims:** LANGUAGE.md "Type Immutability": "A variable's type is fixed at its declaration and never changes", and reusing an already-declared name "as the target of `open ... called`" rejects a type that conflicts with the name's existing declaration. A program that vox accepts never stops on a signal.
+**Claims:** LANGUAGE.md "Function Scope": "Declaring a variable inside a function **shadows** a top-level variable of the same name (`a number called g is 5.` inside a function creates a local `g`); the global is left untouched." A function reads a global the same way "including inside a function written **above** the declaration".
 
 **Pile:** manual says X, compiler does Y.
 
-**Hits:** 1, first and last seen 2026-10-17.
+**Hits:** 1, first and last seen 2026-10-18.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
+
+---
+
+### 171. A text from `arguments's name` is refused as an append source
+
+**Reproducer:**
+
+```vox
+a buffer called holder.
+a text called 'the binary name' is arguments's name.
+append 'the binary name' to holder.
+Print holder.
+```
+
+- **Expected:** the program prints its own name.
+- **Actual:**
+
+```text
+$ vox name_append.vox -o name_append
+error: Buffer append requires a buffer source: the binary name
+  --> name_append.vox:3:29
+```
+
+The text is declared on line 2 and is a text; every other text is accepted as an append source.
+
+**Class:** spurious compile error.
+
+**Phase:** analysis.
+
+**Claims:** LANGUAGE.md "Buffer Append and Copy": "`append source to destination` adds source bytes to the end of destination." LANGUAGE.md "Arguments Properties": `arguments's name` is the program name (argv[0]), a text.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-18.
+
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
+
+---
+
+### 172. A timer parameter cannot read `elapsed`
+
+**Reproducer:**
+
+```vox
+To check with a timer called watch.
+    Print the watch's elapsed in milliseconds.
+
+a timer called clock.
+Start the clock.
+check of clock.
+```
+
+- **Expected:** the elapsed milliseconds print.
+- **Actual:**
+
+```text
+$ vox timer_parameter.vox -o timer_parameter
+error: Property 'elapsed' requires a timer: watch
+  --> timer_parameter.vox:1:30
+    |
+  1 | To check with a timer called watch.
+    |                              ^--- here
+```
+
+The message says `watch` is not a timer, and the caret is on its declaration as a timer.
+
+**Class:** spurious compile error.
+
+**Phase:** analysis.
+
+**Claims:** LANGUAGE.md "Parameter and Local Types": "a typed parameter supports the same properties and operations as a top-level variable of that type", and `timer` is one of the 11 parameter types. LANGUAGE.md "Timer Properties": `elapsed` is a timer property.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-18.
+
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
+
+---
+
+### 173. A lexer error inside a `see`-included file is reported at the including file's first line
+
+**Reproducer:** `main.vox`:
+
+```vox
+(a comment line)
+see "./inc/helper.vox".
+greet.
+```
+
+and `inc/helper.vox`:
+
+```vox
+To greet.
+    (says hello)
+    Print "{".
+```
+
+- **Expected:** the error points at `inc/helper.vox:3`, where the unmatched `{` is.
+- **Actual:**
+
+```text
+$ vox main.vox -o main
+error: Unmatched `{` in a string literal. A single `{` begins a format interpolation, but no variable or expression followed it. To write a literal brace, double it: `{{` for `{` and `}}` for `}`.
+  --> main.vox:1:1
+    |
+  1 | (a comment line)
+    | ^--- here
+```
+
+The message gives neither the file nor the line of the string, and the caret is on the first line of the including file. The same family as #11 and #46, which misattributed error positions.
+
+**Class:** spurious compile error.
+
+**Phase:** parse.
+
+**Claims:** LANGUAGE.md "The `see` Keyword" says an included file "is parsed as part of your program" and does not say where an error inside it is reported.
+
+**Pile:** manual is silent.
+
+**Hits:** 1, first and last seen 2026-10-18.
+
+**Proposal:** an error found in an included file is reported at that file's path, line and column, with the line quoted from that file.
+
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
+
+---
+
+### 163. Reading a global timer's `elapsed` inside a function stops the program
+
+**Reproducer:**
+
+```vox
+a timer called clock.
+To check.
+    a number called waited is the clock's elapsed in milliseconds.
+    Print "waited {waited}".
+
+Start the clock.
+Wait 50 milliseconds.
+check.
+check.
+```
+
+- **Expected:** `waited 50` (about), twice.
+- **Actual:**
+
+```text
+$ vox timer_in_function.vox -o timer_in_function && ./timer_in_function
+waited 0
+Floating point exception
+[exit 136]
+```
+
+The first call prints `waited 0` where about 50 is expected, and the second call stops the program on a floating point exception.
+
+**Class:** crash.
+
+**Phase:** runtime.
+
+**Claims:** LANGUAGE.md "Function Scope": "Variables declared at top level are global and can be used inside functions". LANGUAGE.md "Timer Properties": `elapsed` is "Elapsed time while running". LANGUAGE.md "A supervisor loop, with no shelling out" reads `the clock's elapsed in milliseconds` while the timer runs. A program that vox accepts never stops on a signal.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-18.
+
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18. Root cause not yet investigated.
+
+---
+
+### 174. When memory runs out, a growing buffer stops the program with a segfault instead of a message
+
+**Reproducer:**
+
+```vox
+a buffer called heap.
+a number called rounds is 0.
+While rounds is less than 200000,
+    append "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" to heap,
+    increment rounds.
+On error Print "append refused, error flag set".
+Print "size {heap's size}".
+```
+
+Run with the address space limited to 10 MB: `prlimit --as=10000000 -- ./out`.
+
+- **Expected:** when the program cannot get the memory it asks for, it stops with a clear `out of memory` message on its standard error and a non-zero exit status.
+- **Actual:**
+
+```text
+$ vox out_of_memory.vox -o out_of_memory
+$ prlimit --as=10000000 -- ./out_of_memory
+Segmentation fault
+[exit 139]
+```
+
+**Class:** crash.
+
+**Phase:** runtime.
+
+**Claims:** LANGUAGE.md "Dynamic Buffers": "Buffers start with 4096 bytes of capacity (size 0) and grow automatically." LANGUAGE.md "Memory Safety Guarantees" lists "No buffer overflows" with "Buffers grow dynamically as needed". The manual does not say what happens when the system has no memory to give.
+
+**Pile:** manual is silent.
+
+**Hits:** 1, first and last seen 2026-10-18.
+
+**Proposal:** TheJostler ruled the behaviour: when memory runs out, the program stops with a clear `out of memory` message on its standard error and a non-zero exit status, never a segfault. The manual states this once the compiler does it.
+
+**State:** open. Registered 2026-10-18. Verified on vox 0.4.16 and on main 88a2de2. Approved by TheJostler 2026-10-18, who ruled the expected behaviour above. Root cause not yet investigated.
 
 ---
 
@@ -476,11 +675,23 @@ Every entry ever filed, by number. Number 113 was never used.
 | 152 | `Get current time into` a declared text, number or list turns it into a time | accepted invalid input | fixed in the next release | [unreleased](bugs/unreleased.md#152-get-current-time-into-a-declared-text-number-or-list-turns-it-into-a-time) |
 | 153 | A comparison is refused as the value of a declaration or a `Set` | spurious compile error | fixed in the next release | [unreleased](bugs/unreleased.md#153-a-comparison-is-refused-as-the-value-of-a-declaration-or-a-set) |
 | 154 | A format string reassigned to a text with `the <name> is` is refused | spurious compile error | fixed in the next release | [unreleased](bugs/unreleased.md#154-a-format-string-reassigned-to-a-text-with-the-name-is-is-refused) |
-| 155 | A file opened in a branch under a top-level buffer's name segfaults | crash | open | [open entries](#155-a-file-opened-in-a-branch-under-a-top-level-buffers-name-segfaults) |
-| 156 | An element of a list parameter named in a local, then appended, prints an address | wrong output on valid input | open | [open entries](#156-an-element-of-a-list-parameter-named-in-a-local-then-appended-prints-an-address) |
-| 157 | Two `value`s holding equal texts compare not equal | wrong output on valid input | open | [open entries](#157-two-values-holding-equal-texts-compare-not-equal) |
-| 158 | A format string as the match of `treating` never fires over a text list | wrong output on valid input | open | [open entries](#158-a-format-string-as-the-match-of-treating-never-fires-over-a-text-list) |
-| 159 | A width with `.0` on a whole number is one character short | wrong output on valid input | open | [open entries](#159-a-width-with-0-on-a-whole-number-is-one-character-short) |
-| 160 | After an `Otherwise`, one closing period is lost | wrong output on valid input | open | [open entries](#160-after-an-otherwise-one-closing-period-is-lost) |
-| 161 | `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused | spurious compile error | open | [open entries](#161-n02-n002-and-n00-are-refused) |
-| 162 | A list holding `nan` is equal to itself | wrong output on valid input | open | [open entries](#162-a-list-holding-nan-is-equal-to-itself) |
+| 155 | A file opened in a branch under a top-level buffer's name segfaults | crash | fixed in the next release | [unreleased](bugs/unreleased.md#155-a-file-opened-in-a-branch-under-a-top-level-buffers-name-segfaults) |
+| 156 | An element of a list parameter named in a local, then appended, prints an address | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#156-an-element-of-a-list-parameter-named-in-a-local-then-appended-prints-an-address) |
+| 157 | Two `value`s holding equal texts compare not equal | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#157-two-values-holding-equal-texts-compare-not-equal) |
+| 158 | A format string as the match of `treating` never fires over a text list | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#158-a-format-string-as-the-match-of-treating-never-fires-over-a-text-list) |
+| 159 | A width with `.0` on a whole number is one character short | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#159-a-width-with-0-on-a-whole-number-is-one-character-short) |
+| 160 | After an `Otherwise`, one closing period is lost | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#160-after-an-otherwise-one-closing-period-is-lost) |
+| 161 | `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused | spurious compile error | fixed in the next release | [unreleased](bugs/unreleased.md#161-n02-n002-and-n00-are-refused) |
+| 162 | A list holding `nan` is equal to itself | wrong output on valid input | fixed in the next release | [unreleased](bugs/unreleased.md#162-a-list-holding-nan-is-equal-to-itself) |
+| 163 | Reading a global timer's `elapsed` inside a function stops the program | crash | open | [open entries](#163-reading-a-global-timers-elapsed-inside-a-function-stops-the-program) |
+| 164 | A hole naming a parameter called 'the text' as `{the text}` prints a stray value | wrong output on valid input | open | [open entries](#164-a-hole-naming-a-parameter-called-the-text-as-the-text-prints-a-stray-value) |
+| 165 | Appending an untyped call's result to a buffer writes an address | wrong output on valid input | open | [open entries](#165-appending-an-untyped-calls-result-to-a-buffer-writes-an-address) |
+| 166 | A text from `arguments's all`, named in a local and appended to a list, is stored as an address | wrong output on valid input | open | [open entries](#166-a-text-from-argumentss-all-named-in-a-local-and-appended-to-a-list-is-stored-as-an-address) |
+| 167 | A loop variable over a returned list, cast as a number, gives the text's address | wrong output on valid input | open | [open entries](#167-a-loop-variable-over-a-returned-list-cast-as-a-number-gives-the-texts-address) |
+| 168 | A `Library` line arriving through `see` silently renames the library | wrong output on valid input | open | [open entries](#168-a-library-line-arriving-through-see-silently-renames-the-library) |
+| 169 | A shared library cannot use another library's `.lib` | spurious compile error | open | [open entries](#169-a-shared-library-cannot-use-another-librarys-lib) |
+| 170 | Whether a local can shadow a global depends on where the function is | spurious compile error | open | [open entries](#170-whether-a-local-can-shadow-a-global-depends-on-where-the-function-is) |
+| 171 | A text from `arguments's name` is refused as an append source | spurious compile error | open | [open entries](#171-a-text-from-argumentss-name-is-refused-as-an-append-source) |
+| 172 | A timer parameter cannot read `elapsed` | spurious compile error | open | [open entries](#172-a-timer-parameter-cannot-read-elapsed) |
+| 173 | A lexer error inside a `see`-included file is reported at the including file's first line | spurious compile error | open | [open entries](#173-a-lexer-error-inside-a-see-included-file-is-reported-at-the-including-files-first-line) |
+| 174 | When memory runs out, a growing buffer stops the program with a segfault instead of a message | crash | open | [open entries](#174-when-memory-runs-out-a-growing-buffer-stops-the-program-with-a-segfault-instead-of-a-message) |
