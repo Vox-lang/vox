@@ -193,3 +193,5 @@ _start:
     EXIT 9
 .fail_10:
     EXIT 10
+
+section .note.GNU-stack noalloc noexec nowrite progbits
