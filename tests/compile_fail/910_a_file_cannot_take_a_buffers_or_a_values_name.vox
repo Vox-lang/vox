@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #155: a variable's type is fixed at its declaration,
+ so a file opened or declared under a buffer's or a value's name is refused,
+ in a branch and at the top level alike.)
+
+a buffer called cupboard is "ab".
+a buffer called pantry is "cd".
+a value called larder is "ef".
+a buffer called cellar is "gh".
+a number called gate is 1.
+If gate is 1 then,
+    open a file called cupboard for writing at "cupboard.txt",
+    Close cupboard.
+open a file called pantry for writing at "pantry.txt".
+open a file called larder for writing at "larder.txt".
+a file called cellar is "cellar.txt".
+Print "size {cupboard's size}".

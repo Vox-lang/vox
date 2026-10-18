@@ -379,9 +379,11 @@ impl CodeGenerator {
             // #85). The rendering is `<digits>.<zeros>`, whose length is
             // the digit count + 1 + precision, so padding the DIGITS out to
             // `width - 1 - precision` brings the whole rendering to exactly
-            // `width`. A width too small to hold the digits and the places
-            // pads nothing, which is what every other padder here does.
-            let digit_width = fmt.width.map(|w| w - 1 - precision).unwrap_or(0);
+            // `width`. A precision of 0 prints no point, so there the
+            // digits take the whole width (docs/BUGS_FOUND.md #159). A
+            // width too small to hold the digits and the places pads
+            // nothing, which is what every other padder here does.
+            let digit_width = fmt.width.map(|w| w.saturating_sub(decimal_places_length(precision))).unwrap_or(0);
             match (digit_width > 0, fmt.zero_pad) {
                 (true, true) => {
                     self.emit_indent(&format!("PRINT_INT_ZEROPAD rdi, {}", digit_width))
@@ -547,6 +549,16 @@ pub(crate) enum FormatSpecAsk {
 /// Read a `{value:SPEC}` clause for the type check. Any count fault is
 /// dropped here for the same reason `parse_format_spec` drops it: the count
 /// check is `check_format_spec`'s job and reports separately.
+/// How many characters a whole number's decimal places add to its
+/// rendering: the point and the zeros, or nothing at all for no places.
+pub(crate) fn decimal_places_length(places: i64) -> i64 {
+    if places > 0 {
+        places.saturating_add(1)
+    } else {
+        0
+    }
+}
+
 pub(crate) fn read_format_spec_ask(fmt: Option<&str>) -> FormatSpecAsk {
     let spec = read_format_spec(fmt).0;
     if let Some(places) = spec.precision {
@@ -665,7 +677,7 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
                 let consumed = fmt_str.len() - width_str.len() + width_end;
                 remaining = &fmt_str[consumed..];
             }
-        } else if width_str.is_empty() {
+        } else if width_str.is_empty() || width_str.starts_with('.') {
             // The clause is nothing but zeros - a bare `0`, or `00...0` -
             // and stripping every leading zero left no digits behind at
             // all. That is a width of zero, not an absent width: the
@@ -674,11 +686,14 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
             // compile error was never meant to reach a count this table
             // already allows (docs/BUGS_FOUND.md #100). A zero-pad flag on
             // a zero-width no-op pads nothing either way, so which value it
-            // takes cannot be observed in the rendering.
+            // takes cannot be observed in the rendering. Zeros followed by
+            // a precision - `0.2`, `00.2`, `0.0` - are that same width of
+            // zero, and the precision composes with it as with any other
+            // width (docs/BUGS_FOUND.md #161).
             spec.width = Some(0);
             spec.zero_pad = zero_pad;
             has_width = true;
-            remaining = "";
+            remaining = width_str;
         }
     }
 

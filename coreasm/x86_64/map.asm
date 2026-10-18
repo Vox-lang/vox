@@ -1072,11 +1072,10 @@ _map_render_to_buffer:
 ; 0 if not.
 global _map_equal
 _map_equal:
-    cmp rdi, rsi
-    jne .map_equal_walk
-    mov rax, 1
-    ret
-.map_equal_walk:
+    ; A map is not equal to itself without looking: one holding a float
+    ; that is not equal to itself (a nan) is unequal to every map, itself
+    ; included, so even the same map is compared entry by entry
+    ; (docs/BUGS_FOUND.md #162).
     push rbx
     push rbp
     push r12

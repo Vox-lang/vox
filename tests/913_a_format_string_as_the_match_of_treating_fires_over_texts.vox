@@ -1,0 +1,22 @@
+(docs/BUGS_FOUND.md #158: a format string as the match of `treating` is the
+ text it builds, so it fires over a text list exactly as a text does.)
+
+a text called word is "kiwi".
+a text called fruit is "fig".
+print each name from ["kiwi", "lime"] treating "{word}" as "matched".
+print each name from ["kiwi", "lime"] treating word as "matched".
+print each name from ["kiwi", "big fig"] treating "big {fruit}" as "large".
+a list called basket is ["lime", "kiwi"].
+a list called sorted is [].
+append each name from basket treating "{word}" as "found" to sorted.
+Print "{sorted}".
+
+To announce with a text called item.
+    Print "announced {item}".
+
+announce of each name from basket treating "{word}" as "the kiwi".
+
+To 'sort the basket' with a list called crate.
+    print each name from crate treating "{word}" as "matched in a function".
+
+'sort the basket' with basket.

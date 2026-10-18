@@ -1,0 +1,19 @@
+(docs/BUGS_FOUND.md #161: a width of zero composes with a precision, so
+ `{n:0.2}`, `{n:00.2}` and `{n:0.0}` print the places and pad nothing.)
+
+a number called n is 63.
+a float called ratio is 2.5.
+Print "{n:0.2}".
+Print "{n:00.2}".
+Print "{n:0.0}".
+Print "{ratio:0.2}".
+Print "{ratio:00.3}".
+a text called owed is "owed {n:0.2}".
+Print owed.
+a buffer called note is "note {ratio:0.1}".
+Print note.
+
+To 'show the amount' with a number called amount.
+    Print "{amount:0.2}".
+
+'show the amount' with 7.

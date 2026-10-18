@@ -315,7 +315,13 @@ impl Parser {
         // Standalone if-sentences own their trailing period.
         // This prevents outer sentence-consuming constructs (e.g., while/for)
         // from treating the inner if's period as their own terminator.
-        if *self.current() == Token::Period {
+        //
+        // An `Otherwise` branch has already taken it: `parse_sentence_body`
+        // consumes the period that ends its sentence, and that period ends
+        // the chain. A second one belongs to the clause around the `If`
+        // (docs/BUGS_FOUND.md #160), exactly as it does after a `then` or a
+        // `But if` branch, whose `parse_block` leaves its period for here.
+        if else_block.is_none() && *self.current() == Token::Period {
             self.advance();
             self.skip_noise();
         }

@@ -1677,6 +1677,11 @@ impl CodeGenerator {
                         self.alloc_var(param_name);
                     }
                     self.variable_types.insert(param_name.clone(), var_type);
+                    // A list parameter holds whatever list the caller hands
+                    // it, so its elements are read by their slot tags, never
+                    // by the element type of a top-level list that happens to
+                    // share its name (docs/BUGS_FOUND.md #156).
+                    self.list_element_types.remove(param_name);
                     if matches!(param_type, Type::Value) {
                         let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
                         self.mixed_tag_slots.insert(param_name.clone(), tag_slot);

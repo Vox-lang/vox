@@ -385,7 +385,7 @@ impl CodeGenerator {
             Expr::StringLit(_) => Some(TAG_STRING),
             Expr::Identifier(name)
                 if self.unprovable_scalars.contains(name)
-                    && self.variable_types.get(name) != Some(&VarType::List) =>
+                    && !matches!(self.variable_types.get(name), Some(&VarType::List | &VarType::Map)) =>
             {
                 // The pre-scan could not prove what this variable holds, so
                 // its declared type must not be turned into a slot tag. `None`
@@ -393,10 +393,13 @@ impl CodeGenerator {
                 // wrong for a string, but never a wild dereference. Stage 1d's
                 // runtime tag propagation replaces the guess with the real tag.
                 //
-                // Lists are exempt: the hazard is a declared type claiming a
-                // pointer tag over bits that are not a pointer, and a list
-                // variable's slot always holds a list pointer. Suppressing
-                // TAG_LIST here would silently un-nest a nested list.
+                // Lists and maps are exempt: the hazard is a declared type
+                // claiming a pointer tag over bits that are not a pointer,
+                // and a list or map variable's slot always holds its own
+                // kind of pointer (a read of anything else is refused into
+                // the empty collection, #115). Suppressing the tag here
+                // would silently un-nest a nested list or store a map as
+                // its address (docs/BUGS_FOUND.md #156).
                 None
             }
             Expr::Identifier(name) => {

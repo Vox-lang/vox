@@ -1,0 +1,29 @@
+(docs/BUGS_FOUND.md #157: two values holding texts compare by their
+ characters, in a condition and as a value, at the top level and in a
+ function.)
+
+a value called word is "ab".
+a value called 'same word' is "{word}".
+a value called 'other word' is "ba".
+a value called count is 5.
+a value called 'number text' is "5".
+If word is 'same word' then, Print "word is same word".
+Otherwise, Print "word is not same word"..
+If word is not 'other word' then, Print "word is not other word".
+Otherwise, Print "word is other word"..
+If count is 'number text' then, Print "a number is a text".
+Otherwise, Print "a number is not a text"..
+a boolean called 'they match' is word is 'same word'.
+Print "{they match}".
+
+To 'compare the words' with a value called left and a value called right.
+    If left is right then, Print "{left} and {right} are the same".
+    Otherwise, Print "{left} and {right} differ"..
+
+'compare the words' with word and 'same word'.
+'compare the words' with word and 'other word'.
+
+a list called pair is ["cd", "{word}"].
+For each item in pair,
+    If item is word then, Print "{item} matches word".
+    Otherwise, Print "{item} does not match word"..

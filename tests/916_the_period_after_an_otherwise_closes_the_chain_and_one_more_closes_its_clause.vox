@@ -1,0 +1,41 @@
+(docs/BUGS_FOUND.md #160: the period after an `Otherwise` branch closes the
+ chain, and one more period closes the clause around it, as after a `then`
+ or a `But if` branch.)
+
+For each number from 1 to 2,
+    If the number is 1 then, Print "one".
+    Otherwise, Print "two"..
+Print "after the loop".
+
+For each number from 1 to 3,
+    If the number is 1 then, Print "first".
+    But if the number is 2 then, Print "second".
+    Otherwise, Print "third"..
+Print "after the second loop".
+
+a number called round is 0.
+While round is less than 2,
+    increment round,
+    If round is 1 then, Print "odd round".
+    Otherwise,..
+Print "after the while".
+
+Repeat 2 times,
+    For each number from 1 to 2,
+        If the number is 1 then, Print "inner one".
+        Otherwise, Print "inner two"...
+Print "after three periods".
+
+To 'count down' with a number called start.
+    Repeat 2 times,
+        If start is 2 then, Print "two left", decrement start.
+        Otherwise, Print "one left"..
+    Print "counted".
+
+'count down' with 2.
+
+For each number from 1 to 2,
+    If the number is 1 then, Print "single one".
+    Otherwise, Print "single two".
+    Print "still in the loop".
+Print "done".
