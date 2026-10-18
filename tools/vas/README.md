@@ -1,15 +1,34 @@
-# vas: the front end
+# vas: the Vox assembler
 
-vas is the Vox assembler: it reads the NASM-dialect assembly the Vox compiler
-writes and will turn it into machine code for the voxelf linker, so that
-building a Vox program needs neither nasm nor ld. It is written in Vox, as a
-library, in `vas.vox`.
+vas reads the NASM-dialect assembly the Vox compiler writes and turns it into
+a static x86-64 executable, through the voxelf ELF writer, so that building a
+Vox program needs neither nasm nor ld. It is written in Vox, as a library,
+`Library 'vas' version "0.1".`, with a command in front of it.
 
-This directory holds its front end. The front end reads a source file and
-everything it includes, runs the preprocessor, follows the sections, and
-parses every statement into a record for the encoder, which comes next. It
-accepts exactly the NASM constructs found in the compiler's output and in
+    vas program.asm -o program
+    chmod 755 program
+
+It accepts exactly the NASM constructs found in the compiler's output and in
 coreasm, and refuses everything else by name, with the file and the line.
+Every jump and call is encoded rel32, where nasm picks rel8 for a target in
+reach, so vas's code is longer than nasm's by those bytes; everything else it
+lays down byte for byte as nasm does (see The checks).
+
+| File | What it is |
+| --- | --- |
+| `vas.vox` | the library: the front end, and the `see` lines that bring in the rest |
+| `encoder.vox` | the encoder: the bytes of one instruction, from a table of the shapes |
+| `assembler.vox` | the two passes, the placing of the sections, and the entries that write an executable |
+| `vas-command.vox` | the `vas` command; it `see`s the library as source, so it is a flat static binary with nothing to load |
+| `build.sh` | builds `vas`, and `libvas.so` with its `libvas.lib`, and checks that the shared build exports the entries under vas's name |
+
+## What it does
+
+The front end reads the source and parses every statement into a record.
+Pass one measures every statement and gives each label its offset in its
+section. voxelf places the sections, which makes every label an address.
+Pass two lays down every statement's bytes at its address, and voxelf writes
+the executable.
 
 ## What the front end does
 
@@ -35,7 +54,38 @@ coreasm, and refuses everything else by name, with the file and the line.
    dot, belongs to the last label that does not.
 5. Works out every expression that holds only numbers and constants already
    known, `equ` constants among them. An expression that depends on a label
-   or on `$` is left for the encoder, which knows the addresses.
+   or on `$` is left for the passes, which know the addresses.
+
+## What the passes do
+
+1. Pass one walks the records in order. An instruction takes the bytes the
+   encoder measures for it; a data directive its unit for each item, a
+   string its own bytes padded to a whole unit; a reservation its count of
+   units; an `align` the padding it needs where it stands, filled with `nop`
+   as NASM fills it, and its section's alignment rises to its boundary. A
+   `times` prefix multiplies the statement. Each label takes the offset its
+   section has reached.
+2. A value that waits on a label is worked out as soon as the label has its
+   place. It is either a number no layout changes, such as the length of a
+   string, `$ - str_0 - 1`, which the encoder may give a short form, or an
+   address, which it takes at full width, as NASM does. vas tells the two
+   apart by working the expression out twice, with each section moved by a
+   different large amount the second time: a number comes out the same both
+   times. An `equ` must be a number.
+3. A statement measured before every label it waits on had its place is
+   measured again once every label has one, and again after any size
+   changes, until the sizes settle, as NASM settles them. The corpus settles
+   in one round.
+4. voxelf's `'place the sections'` places every section that holds anything,
+   at the alignment NASM gives it in an object (16 for code, 4 for data,
+   raised by `align`), and each label becomes an address.
+5. Pass two lays down every statement's bytes at its address, and checks
+   that each comes out the size pass one measured: anything else is an
+   internal error, named with its line.
+6. voxelf's `'write the executable and count the errors'` takes the section
+   images, joined into one image buffer, the address each was assembled for,
+   which voxelf checks against its own placing, and the address of `_start`,
+   and writes the executable. Nothing is written when there was any error.
 
 ## What it accepts
 
@@ -85,16 +135,32 @@ its output. Among what NASM has and the corpus does not use:
   `stosb`;
 - a macro parameter count other than `N` and `N-*`.
 
-`tests/toolchain/vas/refusals/` holds a test for each kind of refusal, with
-the exact message it gives.
+The passes refuse, with the file and the line:
+
+- a name nothing defines;
+- an `equ` whose value is an address rather than a number;
+- a `times` count or a reservation count not known before anything is
+  assembled;
+- data or an instruction in `.bss`, and anything in `.note.GNU-stack`;
+- a floating-point number anywhere but `dq`;
+- an instruction whose operands no row of the encoder's table takes;
+- a source with no `_start` label, or with no `.note.GNU-stack` section to
+  say that the stack is not executable: the executable's stack never is.
+
+`tests/toolchain/vas/refusals/` holds a test for each kind of refusal the
+front end makes, and `tests/toolchain/vas/assembly/refusals/` one for each
+the passes make, with the exact message it gives.
 
 ## The interface
 
 The public entries take and return only paths, numbers and texts, so a host
-that is not Vox can call them through `libvas.so`:
+that is not Vox can call them through `libvas.so`, by the symbols a shared
+build exports, which are these:
 
 | Function | Symbol | What it does |
 |---|---|---|
+| `'assemble the file' of <source> and <coreasm directory> and <output path>` | `vas_0_1_assemble_the_file` | Assembles the source into a static executable at the output path, with mode 0644: the caller makes it executable. Answers the diagnostics, one per line, each `<file>:<line>: <message>`, or the empty text when the executable was written. |
+| `'assemble file counting errors' of <source> and <coreasm directory> and <output path>` | `vas_0_1_assemble_file_counting_errors` | The same, answering the number of errors instead, and keeping the diagnostics of a failing call for `'assembler diagnostics'`. |
 | `'expand file' of <source> and <coreasm directory> and <output path>` | `vas_0_1_expand_file` | Preprocesses the source and writes the expansion, one statement per line, to the output path. Answers the number of errors: 0 when the expansion was written. |
 | `'expand file with definitions' of <source> and <coreasm directory> and <output path> and <definitions>` | `vas_0_1_expand_file_with_definitions` | The same, with single-line macros defined before the source is read, as nasm's `-D` defines them: words separated by spaces, each `NAME` or `NAME=VALUE`. |
 | `'assembler diagnostics' of <output path>` | `vas_0_1_assembler_diagnostics` | The messages of the last failing call that wrote to that output path, one per line, each `<file>:<line>: <message>`. |
@@ -109,7 +175,13 @@ removes a diagnostics file an earlier call left.
 directory that holds the coreasm directory (the compiler names its includes
 `coreasm/<arch>/<file>.asm`), then in the coreasm directory itself.
 
-A Vox program can skip the files and call the front end directly:
+A Vox program can call the whole assembly in process, with a buffer of its
+own for the diagnostics; it answers the number of errors:
+
+    'assemble the source' with <source> and <coreasm directory> and <output path>
+        and <diagnostics buffer>
+
+or skip the files and call the front end directly:
 
     'read the source' with <source> and <coreasm directory> and <definitions>
         and <what vas knows> and <statements list> and <diagnostics buffer>
@@ -123,44 +195,62 @@ every kind of statement.
 
 ## Building and using it
 
-Build the shared library, then either `see` its interface or pull the source
-into a program:
+`tools/vas/build.sh [DIR]` builds the `vas` command, and the shared library,
+into `$VAS_BUILD` or `${TMPDIR:-/tmp}/vas-build`, compiling in that directory
+rather than in the source tree. By hand, build the shared library and `see`
+its interface, or pull the source into a program:
 
     vox tools/vas/vas.vox --shared -o libvas.so
     see vas version "0.1" from "./libvas.lib".
     see "../../tools/vas/vas.vox".
 
+`vas.vox` sees `encoder.vox`, `assembler.vox` and `../voxelf/voxelf-body.vox`,
+so those three come with it, and a program that sees it is a flat static
+binary, as the command is. It sees voxelf by its body, which has no Library
+line, because a seen file is read where the `see` stands and a Library line
+puts every function after it into that library: seeing `voxelf.vox` would
+put vas's own functions into library voxelf. Seen by its body, voxelf's
+functions belong to vas, so a shared build of vas exports them too, as
+`vas_0_1_...` beside vas's own: `vas_0_1_place_the_sections`, for one.
+`build.sh` checks that `libvas.so` exports the entries above under vas's
+name, and that `libvas.lib` names library vas, so a change that moved them
+into another library fails there.
+
 The build writes `libvas.lib` beside `libvas.so`. A Vox library exports every
 function it defines, so the `.so` and the table of contents in the `.lib`
-list all of the front end's functions, its helpers and the zero-argument
-functions that name its numbers among them. Only the entries above are its
-interface; the others may change with the encoder.
+list every function of the front end, the encoder, the passes and voxelf,
+helpers and the zero-argument functions that name numbers among them. Only
+the entries above are vas's interface; the others may change.
 
-`readelf -r libvas.so` shows one relocation, an `R_X86_64_RELATIVE` in
-`.fini_array`. The compiler gives a library that entry when its functions
-use the runtime's resources, a buffer among them: it points at the runtime's
-cleanup, which releases them when the library is unloaded, and the loader
-adds the load address to it. A library that uses none, such as the `mathkit`
-example in the Vox manual, has neither the entry nor the relocation. The
-library is position-independent either way.
+The `vas` command takes the source, `-o` for the output,
+and `-c` for the coreasm directory, which defaults to the one `VOX_CORE_PATH`
+names and then to `/usr/share/vox/coreasm`. It writes the diagnostics to
+standard error and exits with the number of errors, or 255 when there are
+more. Vox opens a file for writing with mode 0644 and has no statement that
+changes a file's mode, so the caller makes the executable executable, as with
+`vox-elf`.
 
 A program that pulls the source in shares one name space with it, so its
 global variables need names the library's functions do not use for a
-variable of another type; the two programs in `tests/toolchain/vas/` show
-the way.
+variable of another type; the programs in `tests/toolchain/vas/` show the
+way.
 
 ## The checks
 
-All three build their own driver program from `tests/toolchain/vas/`. They
-run in the Vox repository, with its assembly corpus present: the expansion
-and structure checks read the corpus in `tests/corpus`, and the structure
-check also reads `tests/toolchain/shapes.py`, none of which this directory
-carries. A path that is not there stops a check with a sentence naming the
-variable that sets it.
+Each builds its own driver program from `tests/toolchain/vas/`, or the `vas`
+command with `build.sh`. They run in the Vox repository, with its assembly
+corpus present: the expansion, structure and program checks read the corpus
+in `tests/corpus`, and the structure check also reads
+`tests/toolchain/shapes.py`, none of which this directory carries. A path
+that is not there stops a check with a sentence naming the variable that
+sets it.
 
     bash tests/toolchain/vas/expand_check.sh
     bash tests/toolchain/vas/refusal_check.sh
     bash tests/toolchain/vas/structure_check.sh
+    bash tests/toolchain/vas/encoder/encoder_check.sh
+    bash tests/toolchain/vas/assembly_check.sh
+    bash tests/toolchain/vas/program_check.sh
 
 - `expand_check.sh` expands every corpus file with vas and with `nasm -E`,
   with the include path and the definitions the corpus harness uses (`PIC`
@@ -184,6 +274,28 @@ variable that sets it.
   and value. Where vas leaves a value to the encoder, because it depends on
   a label, shapes.py may know it; those are counted and reported. The
   refused files are left out.
+- `encoder/encoder_check.sh` encodes each mechanic, and the example of every
+  row of `tests/toolchain/shapes.tsv`, and compares the bytes with nasm's.
+- `assembly_check.sh` runs every file in `assembly/refusals/`, each a
+  program the passes must refuse, as `refusal_check.sh` runs the front
+  end's; and assembles `assembly/features.asm`, which uses `default rel`, an
+  `equ` used before it is defined, `$`, `times`, `align` in data,
+  floating-point `dq` items and all four sections. Its bytes must be nasm's
+  when nasm has every jump written near and ld links it at the addresses vas
+  chose, and it must run as nasm and ld's executable runs.
+- `program_check.sh` assembles every program in the corpus with the `vas`
+  command, links nothing else, and compares the executable's `.text` and
+  `.data` with those of the executable nasm and ld make of it, by
+  `tests/toolchain/run.sh`'s recipe. Equal, the program is identical.
+  Otherwise its bytes must be nasm's when nasm has every jump written near,
+  linked at vas's addresses, which shows the difference is jump widths and
+  nothing else, and the two executables must run alike, with the arguments
+  and input `tests/toolchain/voxelf/check.sh` gives each program: then it
+  runs the same. A program that needs root, does not finish, or prints
+  something different every run, is listed as not run, with the reason.
+  Every run of `vas` and of a program is held to `VAS_MEMORY_CAP` (4G) with
+  systemd-run where there is a user session, and to a time limit. The check
+  prints each run's time and peak memory.
 
 Each ends with one summary line and exits non-zero on any failure. Before
 it, the expansion check prints a `refused as expected:` line for each
@@ -211,9 +323,21 @@ given that name, and asks `'what vas knows'` one question per word. When only
 the expansion is wanted, as for `'expand file'`, it keeps each statement's
 text rather than its whole record.
 
-Even so, expanding the largest program in the corpus, `coreutils/cut.asm`,
-takes about 750 MB at its peak, and most take between 130 and 550 MB. A
-shared build's source is refused where its `.fini_array` section or its
-first `extern` is reached, and nothing after that is read, so the largest
-library in the corpus, `vox-libs/date.asm`, takes about 580 MB before it is
-refused, where reading it to the end took about 2.5 GB.
+Even so, on the machine these checks were written on, with Vox v0.4.16,
+expanding the largest program in the corpus, `coreutils/cut.asm`, peaked at
+about 750 MB (766 MB when measured again on 17 October 2026), and most
+peaked between 130 and 550 MB. A shared build's source is refused where its
+`.fini_array` section or its first `extern` is reached, and nothing after
+that is read, so the largest library in the corpus, `vox-libs/date.asm`,
+peaked at about 580 MB before it was refused, where reading it to the end
+took about 2.5 GB.
+
+The passes read each record out of the statements list once each, which
+copies it, and keep everything else about a statement as five numbers in one
+list. An instruction's operands are copied again only when it has a value to
+work out, and the statements pass one measures again are only those whose
+size could still change. Measured on 17 October 2026, with Vox v0.4.16 and
+the corpus in `tests/corpus`, on the machine these checks were written on,
+assembling `coreutils/cut.asm` whole peaked at about 2.1 GB and took under
+3 seconds, and the other corpus programs peaked between 50 MB and 1.5 GB.
+`program_check.sh` prints the figures for the machine it runs on.

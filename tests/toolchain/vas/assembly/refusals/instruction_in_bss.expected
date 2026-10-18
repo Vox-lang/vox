@@ -1,0 +1,1 @@
+instruction_in_bss.asm:5: the section .bss holds room and no bytes, so it cannot hold an instruction

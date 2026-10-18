@@ -19,7 +19,7 @@ vox=${VOX:-vox}
 
 mkdir -p "$build"
 build=$(cd "$build" && pwd)
-cp "$here/voxelf.vox" "$here/vox-elf.vox" "$build/"
+cp "$here/voxelf.vox" "$here/voxelf-body.vox" "$here/vox-elf.vox" "$build/"
 cd "$build"
 
 "$vox" voxelf.vox --shared -o libvoxelf.so

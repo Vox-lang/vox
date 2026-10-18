@@ -1,0 +1,1 @@
+no_stack_note.asm:0: the source has no section .note.GNU-stack to say that the stack is not executable, and vas writes only executables whose stack is not
