@@ -355,3 +355,306 @@ A plain literal (`the note is "plain".`) is accepted, and so is `Set note to "pr
 **Hits:** 1, first and last seen 2026-10-17.
 
 **State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16 and on main 9544ceb; confirmed by TheJostler 2026-10-17. Regression tests: tests/906_a_format_string_reassigns_a_text_with_the_is.vox, tests/907_format_strings_with_every_hole_reassign_with_the_is.vox, tests/compile_fail/901_a_format_string_cannot_be_written_into_a_number_with_the_is.vox.
+
+---
+
+### 155. A file opened in a branch under a top-level buffer's name segfaults
+
+**Reproducer:**
+
+```vox
+a buffer called cupboard is "ab".
+a number called gate is 1.
+If gate is 1 then,
+    open a file called cupboard for writing at "cupboard.txt",
+    Close cupboard.
+Print "size {cupboard's size}".
+```
+
+- **Expected:** a compile error, because the name is already a buffer and a file cannot be bound to it.
+- **Actual:**
+
+```text
+$ vox file_over_buffer.vox -o file_over_buffer && ./file_over_buffer
+size Segmentation fault         (core dumped)
+```
+
+The program compiles without a message and stops on a signal at the read of `cupboard`.
+
+**Class:** crash.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Type Immutability": "A variable's type is fixed at its declaration and never changes", and reusing an already-declared name "as the target of `open ... called`" rejects a type that conflicts with the name's existing declaration. A program that vox accepts never stops on a signal.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Regression tests: tests/compile_fail/910_a_file_cannot_take_a_buffers_or_a_values_name.vox, tests/compile_fail/911_a_file_cannot_take_a_buffers_name_in_a_function.vox, tests/917_a_file_opened_again_above_a_buffer_of_its_name_is_still_a_file.vox.
+
+---
+
+### 156. An element of a list parameter named in a local, then appended, prints an address
+
+**Reproducer:**
+
+```vox
+To 'copy over' with a list called sections and a list called placed.
+    a map called section is element 1 of sections.
+    append section to placed.
+
+a list called sections is [{"name": ".text", "size": 10}].
+a list called placed is [].
+'copy over' with sections and placed.
+Print "{placed}".
+```
+
+- **Expected:** `[{"name": ".text", "size": 10}]`.
+- **Actual:**
+
+```text
+$ vox copy_over.vox -o copy_over && ./copy_over
+[140602820956160]
+```
+
+The same with a text, `a text called name is element 1 of names.` then `append name to placed.`, prints `[4198561]` where `["alpha"]` is expected. Naming the element of a list declared at the top level, rather than a list parameter, and appending it stores the right element.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Mixed-Type Lists": "Appending, `set element`, `element N of`, `first`/`last`, iteration, and `{...}` format interpolation all respect each element's actual type." LANGUAGE.md "A collection parameter is the caller's collection": a `list` parameter names the caller's collection, so what the function reads from it is what the caller's list holds.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Regression test: tests/910_an_element_named_in_a_local_keeps_its_type_when_appended.vox.
+
+---
+
+### 157. Two `value`s holding equal texts compare not equal
+
+**Reproducer:**
+
+```vox
+a value called word is "ab".
+a value called 'same word' is "{word}".
+If word is 'same word' then, Print "word is same word".
+Otherwise, Print "word is not same word"..
+```
+
+- **Expected:** `word is same word`. Both `value`s hold the text `ab`.
+- **Actual:**
+
+```text
+$ vox value_equal.vox -o value_equal && ./value_equal
+word is not same word
+```
+
+Two texts declared as `text` and holding the same characters compare equal.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Comparisons": "compare two texts with `is`", and "Equality (`is`, `is equal to`, `is not`) takes a `value` as it is". A `value` that holds a text is compared as that text.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Regression test: tests/911_two_values_holding_texts_compare_by_their_characters.vox.
+
+---
+
+### 158. A format string as the match of `treating` never fires over a text list
+
+**Reproducer:**
+
+```vox
+a text called word is "kiwi".
+print each name from ["kiwi"] treating "{word}" as "matched".
+print each name from ["kiwi"] treating word as "matched".
+```
+
+- **Expected:** `matched` on both lines. `"{word}"` is the text `kiwi`, the same as `word`.
+- **Actual:**
+
+```text
+$ vox treating_format.vox -o treating_format && ./treating_format
+kiwi
+matched
+```
+
+The format string as the match fires over a mixed list, and `treating word as` fires over the text list. The compiler gives no mismatch message.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Format Strings Everywhere": "Every statement that takes a string value accepts a format string: ... `treating` clauses". LANGUAGE.md "Inline Substitution with `treating`": "If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Regression test: tests/913_a_format_string_as_the_match_of_treating_fires_over_texts.vox.
+
+---
+
+### 159. A width with `.0` on a whole number is one character short
+
+**Reproducer:**
+
+```vox
+a number called n is 63.
+Print "[{n:012.0}]".
+Print "[{n:12.0}]".
+Print "[{n:012.1}]".
+Print "[{n:012}]".
+```
+
+- **Expected:** twelve characters between the brackets on every line: `[000000000063]`, `[          63]`, `[0000000063.0]` and `[000000000063]`.
+- **Actual:**
+
+```text
+$ vox width_point_zero.vox -o width_point_zero && ./width_point_zero
+[00000000063]
+[         63]
+[0000000063.0]
+[000000000063]
+```
+
+The first two lines are eleven characters wide. `{n:012.1}`, `{n:012}` and, on a float, `{f:08.0}` are the right width.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Format Specifiers": "`{var:N}` pads out to `N` characters", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters. The precision decides the digits and the width decides the padding, on a number and a float alike."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Regression test: tests/914_a_width_beside_a_precision_of_zero_counts_no_point.vox.
+
+---
+
+### 160. After an `Otherwise`, one closing period is lost
+
+**Reproducer:**
+
+```vox
+For each number from 1 to 2,
+    If the number is 1 then, Print "one".
+    Otherwise, Print "two"..
+Print "after the loop".
+```
+
+- **Expected:** `one`, `two`, `after the loop`. The period after `"two"` closes the `Otherwise`, which ends the `If` chain, and the second period closes the `For each`.
+- **Actual:**
+
+```text
+$ vox otherwise_periods.vox -o otherwise_periods && ./otherwise_periods
+one
+after the loop
+two
+after the loop
+```
+
+The second period closes nothing, so `Print "after the loop".` is read inside the loop body. The manual's own example of an empty `Otherwise,.` closing a chain needs the same extra period. `then, X..` and `But if ..., X..` close two levels correctly.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "The termination rule": "A period ends the innermost open clause ... One period closes one level; to close more than one, write more than one". LANGUAGE.md "Closing more than one level": "periods stack: write one period per level you want to close", and "An empty `Otherwise,.` closes an inner chain the same way".
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Regression test: tests/916_the_period_after_an_otherwise_closes_the_chain_and_one_more_closes_its_clause.vox.
+
+---
+
+### 161. `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused
+
+**Reproducer:**
+
+```vox
+a number called n is 63.
+Print "{n:0.2}".
+```
+
+- **Expected:** the program prints `63.00`. A width may be zero and composes with a precision.
+- **Actual:**
+
+```text
+$ vox zero_width_precision.vox -o zero_width_precision
+error: '0.2' is not a format specifier Vox knows
+  --> zero_width_precision.vox:2:11
+```
+
+`{n:00.2}` and `{n:0.0}` are refused the same way. `{n:0}`, `{n:00}` and `{n:1.2}` are accepted.
+
+**Class:** spurious compile error.
+
+**Phase:** analysis (the message comes from the format specifier check).
+
+**Claims:** LANGUAGE.md "Format Specifiers": "A width may be zero - `{var:0}` and `{var:00}` pad nothing", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Regression test: tests/915_a_zero_width_composes_with_a_precision.vox.
+
+---
+
+### 162. A list holding `nan` is equal to itself
+
+**Reproducer:** the manual has no `nan` literal. A `nan` is made here by subtracting a float that has overflowed from itself.
+
+```vox
+a float called huge is 1000000000000.0.
+Repeat 5 times, set huge to huge multiply huge.
+a float called unordered is huge subtract huge.
+If unordered is unordered then, Print "scalar: equal".
+Otherwise, Print "scalar: not equal"..
+a list called xs is [unordered].
+a list called zs is [unordered].
+If xs is xs then, Print "a list and itself: equal".
+Otherwise, Print "a list and itself: not equal"..
+If xs is zs then, Print "a list and a second list built the same way: equal".
+Otherwise, Print "a list and a second list built the same way: not equal"..
+```
+
+- **Expected:** `scalar: not equal`, `a list and itself: not equal`, `a list and a second list built the same way: not equal`. A list is equal when each element equals the element in the same place, and a `nan` does not equal itself.
+- **Actual:**
+
+```text
+$ vox nan_list.vox -o nan_list && ./nan_list
+scalar: not equal
+a list and itself: equal
+a list and a second list built the same way: not equal
+```
+
+A list holding `nan` answers differently for the same list and for an identical one, as if the same list were not compared element by element.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Comparisons": "Two lists are equal when they have the same length and each element equals the element in the same place, nested lists and maps included". A float that is not equal to itself makes any list holding it unequal to every list, itself included.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16. Decided under LANGUAGE.md's element-by-element rule on 2026-10-17. Regression test: tests/912_a_collection_holding_nan_is_not_equal_to_itself.vox.
+
+---
