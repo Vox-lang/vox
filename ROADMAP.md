@@ -29,10 +29,16 @@ graph LR
     M2 --> M4[M4: Syscall surface]
     M3 --> M5[M5: Crypto & network stacks in Vox]
     M4 --> M5
-    M2 --> M6[M6: IR & multi-arch coreasm]
+    M2 --> M6[M6: Multi-architecture]
     M5 --> M7[M7: Freestanding & kernel]
     M6 --> M7
+    M0 --> V5[M0.5: One owner per collection]
+    M1 --> V5
+    V5 --> M8[M8: Self-hosted toolchain]
+    M8 --> M9[M9: The language]
 ```
+
+The edge from M0.5 to M8 gates M8's self-check and performance items only.
 
 ---
 
@@ -75,8 +81,41 @@ graph LR
       declared signature is trusted, not verified against its `.so` (audit
       section C).)*
 
+- [ ] **The manual as the source of truth for tests.** Done when every claim in
+      LANGUAGE.md carries a runnable example and the claim ledger is generated
+      from it.
+- [ ] **Zero open "wrong output on valid input" entries at every release**, with
+      a public register showing every open bug. Done when the release script
+      fails on any such entry.
+
 **Exit criteria:** the full test suite passes; no known program written in
 documented Vox can crash the generated binary.
+
+---
+
+## Milestone 0.5: One Owner per Collection (ships as v0.5.0)
+
+*Every list, map and buffer has one owning place.*
+
+- [x] One owning place for every list, map and buffer; copy on naming;
+      equality by contents (vox #305).
+- [ ] **Memory reclamation.** Copies, function locals, text map keys and call
+      results are freed when nothing names them, and allocations reuse freed
+      memory. Done when a 100,000-iteration loop that copies a list runs in flat
+      memory, `vas` assembles every corpus program in under 64 MB and assembles
+      itself in under 256 MB, and the manual and M3 restate the freeing rule.
+- [ ] **Reading inside a nested collection never copies it** (`element N of m's
+      "list"`, `'s length`, `For each`). Done when reading in place is flat in
+      memory.
+- [ ] **A second name for the same collection**, `is also called` (design to be
+      ruled). Done when the manual states the rule and a test covers it.
+- [ ] **Passing a collection held inside a map or list straight to a
+      parameter** (design to be ruled). Done when the manual states whether the
+      parameter is the collection itself or a copy, and the call is flat in
+      memory.
+- [ ] **Out of memory.** Done when a program that cannot allocate stops with a
+      clear "out of memory" message and a non-zero exit, never a crash
+      (register #174).
 
 ---
 
@@ -87,8 +126,8 @@ documented Vox can crash the generated binary.
 that guarantee load-bearing.*
 
 - [ ] Guarantee unbounded memory: dynamic buffers and lists must grow until
-      `mmap` fails, and allocation failure must set the error flag (or exit
-      cleanly), never corrupt memory.
+      `mmap` fails, and allocation failure stops the program with a clear
+      out-of-memory message and a non-zero exit, never a crash (#174).
 - [ ] Guarantee deep recursion: document stack behavior, detect/handle stack
       exhaustion predictably.
 - [ ] **Acceptance test: a Brainfuck interpreter written in pure Vox** (a
@@ -120,7 +159,8 @@ Design doc: [docs/STRUCTS_AND_OBJECTS.md](docs/STRUCTS_AND_OBJECTS.md).*
       criterion below remains gated on sized integers.
 - [ ] **Sized integers**: 8/16/32/64-bit reads and writes, signed and
       unsigned, with explicit width in the syntax (today everything is a
-      64-bit `number`). Wrapping/overflow semantics defined, not accidental.
+      64-bit `number`). The edge-of-range
+      rule is M9's "True numbers" item.
 - [ ] **Function references / indirect calls**: required later for interrupt
       vector tables, driver operation tables, and callback-style library APIs.
 - [ ] Typed multi-byte buffer access (`word N of buf`, `dword N of buf`),
@@ -166,6 +206,9 @@ wrong arity, and wrong type.*
 - [ ] Define and document a **stable Vox ABI**: calling convention, buffer
       and list memory layout, error-flag propagation across library
       boundaries. Struct layout (M2) becomes part of the ABI.
+- [ ] A library that depends on another library (register #168, #169). Done
+      when `libvas.so` links against `libvoxelf.so` with no copy of it inside,
+      and a static wrapper still builds flat.
 - [ ] Cross-library resource tracking: files/buffers allocated inside a
       library are cleaned up by the same exit-time guarantees.
 - [ ] Ship a first-party `std` seed library (string ops, parsing, math) as
@@ -257,7 +300,8 @@ grammar would read awkwardly anyway (e.g. `setsockopt`).
       (socket/bind/listen/accept/connect/send/recv) and polling
       (epoll/poll), prioritized per the brainstorm doc.
 - [ ] Error-flag integration: negative syscall returns set the Vox error
-      flag and preserve errno for inspection; extend the pattern already
+      flag and preserve errno for inspection (the model follows the M9 Errors
+      ruling); extend the pattern already
       established by the mount/pivot_root/execve error paths.
 
 ### Next: what a Vox userland and init system need
@@ -325,22 +369,20 @@ survives a fuzzing run and serves real traffic.
 
 ---
 
-## Milestone 6: IR & Multi-Architecture coreasm
+## Milestone 6: Multi-Architecture
 
-*Design docs: [docs/IR_DESIGN.md](docs/IR_DESIGN.md),
-[docs/MULI_ARCH_PLAN.md](docs/MULI_ARCH_PLAN.md). The `--target` flag and
+*Design doc: [docs/MULI_ARCH_PLAN.md](docs/MULI_ARCH_PLAN.md). The `--target` flag and
 `coreasm/{aarch64,Win64}/` stubs exist; x86_64 has 14 runtime modules, the
 others have 3.*
 
-- [ ] Introduce the IR between analyzer and codegen (per IR_DESIGN.md), so
-      optimizations and lowering are portable: "optimize the IR, not the
-      assembly."
 - [ ] Define the **coreasm contract**: the fixed set of runtime routines
       (heap, list, buffer, string, io, file, format, time, resource...) with
       documented register/ABI expectations per architecture, so a port is
       "implement this checklist," not reverse-engineering.
-- [ ] **AArch64 (ARM64) port**: first non-x86 target; full coreasm rewrite
-      plus IR lowering; run the whole `tests/` suite under qemu or native.
+- [ ] **AArch64 (ARM64) port**: first non-x86 target. Each port is its own
+      coreasm behind the contract, plus its rows in `vas`'s table-driven encoder
+      (M8), with the compiler emitting code for that target. Done when the whole
+      `tests/` suite passes under qemu or native.
 - [ ] **RISC-V (rv64) port**: second port; proves the contract generalizes.
 - [ ] Win64 port (PE output, Windows syscall/API strategy): tracked but
       lowest priority of the three.
@@ -356,7 +398,7 @@ others have 3.*
       `_check_call_depth`/`_dec_call_depth`, stack-spilled params,
       push/pop expression evaluation, a duplicated `_last_error` clear)
       around as little as two of real work: scalar, and roughly 50–200×
-      off an FMA kernel for matmul-shaped work. On the IR, in payoff order:
+      off an FMA kernel for matmul-shaped work. In codegen, in payoff order:
       (a) **inline small callees at grid sites**: the desugar already owns
       the call, so this deletes the call/prologue/depth-checks/spills in one
       stroke, the single biggest win; (b) **registerize induction variables**
@@ -366,8 +408,8 @@ others have 3.*
       contiguous tensor substrate, the entry point to real vector calculus;
       (d) **cache tiling for free**: a blocked kernel is just more clauses
       (`each iblock ... and each jblock ... and each i ... and each j`),
-      expressible today with no new syntax. IR-gated: do it once, portably,
-      not per-arch. Prereq for any serious numerical Vox (M5 crypto included).
+      expressible today with no new syntax. Done once in codegen,
+      ahead of each target's emission. Prereq for any serious numerical Vox (M5 crypto included).
 
 ---
 
@@ -454,18 +496,91 @@ and at least one other M6 architecture.
 
 ---
 
+## Milestone 8: Self-Hosted Toolchain
+
+*`tools/vas` (assembler) and `tools/voxelf` (linker), both written in Vox, replace
+`nasm` and `ld`. Items in build order; the memory items are in M0.5.*
+
+- [x] **`vas` assembles whole programs and `voxelf` links them.** Every
+      comparable corpus program runs the same as its `nasm` and `ld` build;
+      `voxelf` lays segments out as `ld` does.
+- [x] **The corpus and its instruction shapes.**
+- [ ] **Byte parity with `nasm`.** Done when `vas` output is byte-identical to
+      `nasm` for everything the compiler emits and the expected-differences list
+      is empty.
+- [ ] **The parity contract in CI.** Done when the instruction inventory comes
+      from the whole test suite, CI fails when the compiler emits a shape `vas`
+      does not cover, and the whole suite passes through `vas` and in a run with
+      no `nasm` and no `ld`.
+- [ ] **The self-check.** Done when `vas` and `voxelf` build themselves
+      byte-identical to the `nasm` and `ld` build (needs M0.5 memory
+      reclamation).
+- [ ] **The compiler uses `vas` and `voxelf` by default.** `--use-system-assembler`
+      keeps `nasm` and `ld` for differential testing. Done when a fresh machine
+      with only `vox` compiles and runs the whole suite, the libraries shipping
+      beside coreasm in every install channel (needs the M3 library-on-library item).
+- [ ] **Robustness.** Done when a `vas` target in vox-fuzz, differential against
+      `nasm`, and malformed-input tests run clean for a set budget.
+- [ ] **Performance.** Done when `vas` is within 10x of `nasm`'s time and under
+      50 MB of memory on the corpus, tightening M0.5's 64 MB floor (needs M0.5
+      memory reclamation).
+- [ ] **Shared-library output.** `voxelf` writes ET_DYN (dynamic section, symbol
+      tables, relocations, PLT and GOT) and `vas` assembles position-independent
+      code and `extern`. Done when `--shared` needs neither `nasm` nor `ld`.
+- [ ] **Direct emission.** How codegen reaches each target. Done when the
+      compiler calls the encoder library directly and skips text assembly.
+- [ ] **More architectures.** Done when arm64 and riscv64 rows sit in the same
+      table-driven encoder, used by the M6 ports.
+
+**Exit criteria:** `vox` compiles and runs every program, and builds `vas` and
+`voxelf`, with no `nasm` and no `ld` installed.
+
+---
+
+## Milestone 9: The Language for the 21st Century
+
+*What the language needs beyond today's foundations. A separate plan for
+self-hosting blockers and post-hosting features merges in here when that work
+starts.*
+
+- [ ] **One form per idea.** Where two spellings exist for one action (`print`
+      and its spellings `show`, `display` and `prints`, among others) one form is kept; whether the others
+      become errors or stay as synonyms is to be ruled. Done when the manual
+      lists one form for each action.
+- [ ] **True numbers.** What a number does at the edge of its range, and how
+      integers and decimals relate (design to be ruled; widths are in M2). Done
+      when the manual states both rules and tests hit each edge.
+- [ ] **Errors.** A clearer error model than one global flag for every
+      operation (design to be ruled). Done when the manual states the model and
+      the examples use it.
+- [ ] **Lists of things, and a thing that holds one of several shapes** (a
+      variant), the data model a parser and a compiler need (design to be
+      ruled). Done when a syntax tree can be built and walked in Vox.
+- [ ] **A Vox parser library.** Vox source read into a tree Vox programs can
+      walk. Done when it parses every example and test, and the fuzzer's leaves
+      derive from the grammar.
+- [ ] **A Vox compiler written in Vox**, built with `vas` and `voxelf`: no Rust,
+      no `nasm`, no `ld`. Done when it compiles itself byte-identical to its
+      own output.
+**Exit criteria:** Vox compiles Vox, with every language rule written once in
+the manual and checked by a test.
+
+---
+
 ## Sequencing Summary
 
 | Order | Milestone | Unblocks |
 |-------|-----------|----------|
-| 1 | M0 Safety baseline | Everything; the guarantees must be real |
-| 2 | M1 Robust Turing completeness | Confidence to build big programs |
-| 3 | M2 Language foundations | M3, M4, M6 |
-| 4 | M3 Shared libraries + M4 Syscalls (parallel) | M5 |
-| 5 | M5 Crypto & network stacks | M7, real-world validation |
-| 6 | M6 IR & multi-arch | M7 on non-x86 |
-| 7 | M7 Freestanding & kernel | The end goal |
+| 1 | M0 Safety baseline, M1 Robust Turing completeness | Everything; the guarantees must be real |
+| 2 | M0.5 One owner per collection (memory reclamation first) | The toolchain's self-check and performance items |
+| 3 | M8 Self-hosted toolchain | The compiler without `nasm` or `ld` |
+| 4 | M9 The language | A compiler written in Vox |
+| 5 | M2 Language foundations | M3, M4, M6 |
+| 6 | M4 Syscalls (with M3 Shared libraries) | M5 |
+| 7 | M5 Crypto & network stacks | M7, real-world validation |
+| 8 | M6 Multi-architecture | M7 on non-x86 |
+| 9 | M7 Freestanding & kernel | The end goal |
 
 M3/M4 can proceed in parallel after M2. M6 can start any time after M2,
-earlier is cheaper, since every feature added before the IR exists must be
-ported by hand later.
+earlier is cheaper, since every feature added before a port must be
+ported by hand to it.
