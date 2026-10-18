@@ -113,3 +113,4 @@ _start:
     lea rdi, [rel path]
     syscall
     EXIT 1
+section .note.GNU-stack noalloc noexec nowrite progbits

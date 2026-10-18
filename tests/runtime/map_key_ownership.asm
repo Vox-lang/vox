@@ -87,3 +87,5 @@ _copy_cstr:
     jmp _copy_cstr
 .done:
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits
