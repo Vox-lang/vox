@@ -39,8 +39,9 @@ assemble() {
 }
 
 # One line per section from the map: name class length start vstart align,
-# numbers in decimal. The alignment is nasm's own (raised by any align
-# directive inside the section), never less than 16.
+# numbers in decimal. The alignment is the one nasm gives the section in an
+# ELF object, which is what ld lays it out by: 16 for .text and 4 for any
+# other section, raised by any align directive inside it.
 sections_of_map() {
     awk '
         function hex(word) { return strtonum("0x" word) }
@@ -54,7 +55,8 @@ sections_of_map() {
             if (hex($2) > align[current]) align[current] = hex($2) }
         END {
             for (i = 1; i <= count; i++) {
-                name = order[i]; wanted = align[name] > 16 ? align[name] : 16
+                name = order[i]; wanted = name == ".text" ? 16 : 4
+                if (align[name] > wanted) wanted = align[name]
                 print name, class[name], length_of[name], start[name], vstart[name], wanted
             }
         }' "$work/map"

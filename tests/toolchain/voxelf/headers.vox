@@ -63,15 +63,15 @@ Create a buffer called 'stack header'.
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].
 
-(hello's sections, placed as ld places them: the code after the three
- program headers at the next multiple of 16, the data on the next page, and
- the zero-filled data after it in memory, at the file offset where the
- data's bytes stop.)
+(hello's sections, with the alignments ld's input gives them, placed as ld
+ places them: the code after the three program headers at the next multiple
+ of 16, the data on the next page, and the zero-filled data after it in
+ memory, at the file offset where the data's bytes stop.)
 Create a buffer called diagnostics.
 a list called 'hello sections' is [
     {"name": ".text", "kind": "text", "size": 303, "alignment": 16},
-    {"name": ".data", "kind": "data", "size": 102, "alignment": 16},
-    {"name": ".bss", "kind": "bss", "size": 32, "alignment": 16}].
+    {"name": ".data", "kind": "data", "size": 102, "alignment": 4},
+    {"name": ".bss", "kind": "bss", "size": 32, "alignment": 4}].
 a list called placed is 'place the sections' with 'hello sections' and 0x400000 and diagnostics.
 'expect the number' with "how many sections were placed" and placed's length and 3.
 a map called 'placed text' is element 1 of placed.
@@ -81,23 +81,66 @@ a map called 'placed zeros' is element 3 of placed.
 'expect the number' with "the file offset of .text" and 'placed text''s "file offset" and 0xF0.
 'expect the number' with "the address of .data" and 'placed data''s "address" and 0x401000.
 'expect the number' with "the file offset of .data" and 'placed data''s "file offset" and 0x1000.
-'expect the number' with "the address of .bss" and 'placed zeros''s "address" and 0x401070.
+'expect the number' with "the address of .bss" and 'placed zeros''s "address" and 0x401068.
 'expect the number' with "the file offset of .bss" and 'placed zeros''s "file offset" and 0x1066.
 
-(Read-only data gets a page of its own, between the code and the data, and
- so a fourth program header, which moves the code along by 56 bytes.)
+(Read-only data gets a segment of its own, between the code and the data,
+ and so a fourth program header, which moves the code along by 56 bytes. The
+ read-only data starts a fresh page of the file, apart from the code; the
+ data follows it in the file at its own alignment of 8, with no page of
+ zeros between them, and starts in memory on the next page, at the same
+ place in the page. The sizes are those of the ld build whose writable
+ segment the program header above was written out from, and the whole
+ header is compared again, built this time from the layout.)
 a list called 'pi sections' is [
     {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
-    {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 16},
-    {"name": ".data", "kind": "data", "size": 680, "alignment": 16},
-    {"name": ".bss", "kind": "bss", "size": 67745, "alignment": 16}].
+    {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 4},
+    {"name": ".data", "kind": "data", "size": 680, "alignment": 8},
+    {"name": ".bss", "kind": "bss", "size": 67752, "alignment": 4}].
 a list called 'pi placed' is 'place the sections' with 'pi sections' and 0x400000 and diagnostics.
 a map called 'pi text' is element 1 of 'pi placed'.
 a map called 'pi read-only data' is element 2 of 'pi placed'.
 a map called 'pi data' is element 3 of 'pi placed'.
+a map called 'pi zeros' is element 4 of 'pi placed'.
 'expect the number' with "the address of pi's .text" and 'pi text''s "address" and 0x400120.
 'expect the number' with "the address of pi's .rodata" and 'pi read-only data''s "address" and 0x402000.
-'expect the number' with "the address of pi's .data" and 'pi data''s "address" and 0x403000.
+'expect the number' with "the file offset of pi's .rodata" and 'pi read-only data''s "file offset" and 0x2000.
+'expect the number' with "the address of pi's .data" and 'pi data''s "address" and 0x403038.
+'expect the number' with "the file offset of pi's .data" and 'pi data''s "file offset" and 0x2038.
+'expect the number' with "the address of pi's .bss" and 'pi zeros''s "address" and 0x4032E0.
+'expect the number' with "the file offset of pi's .bss" and 'pi zeros''s "file offset" and 0x22E0.
+a list called 'pi segments' is 'the segments of' with 'pi placed' and 0x400000 and 0x120.
+'expect the number' with "how many loadable segments pi has" and 'pi segments''s length and 3.
+a map called 'pi writable segment' is element 3 of 'pi segments'.
+Create a buffer called 'laid out data segment header'.
+'append a program header' with 'laid out data segment header' and 'the loadable segment type' and 'pi writable segment''s "permissions" and 'pi writable segment''s "file offset" and 'pi writable segment''s "address" and 'pi writable segment''s "file size" and 'pi writable segment''s "memory size" and 'the page size'.
+'expect the bytes' with "the writable segment's program header, from the layout" and 'laid out data segment header' and [
+    0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x38, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x38, 0x30, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x30, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xA8, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].
+a map called 'pi read-only segment' is element 2 of 'pi segments'.
+'expect the number' with "the file offset of pi's read-only segment" and 'pi read-only segment''s "file offset" and 0x2000.
+'expect the number' with "the address of pi's read-only segment" and 'pi read-only segment''s "address" and 0x402000.
+
+(Zero-filled data with no initialised data before it opens the writable
+ segment itself. It starts in memory on the page after the read-only data
+ at the place the file had got to, 0x34, and its alignment of 8 moves it on
+ to 0x38; the segment holds no bytes, but its file offset must still agree
+ with its address modulo the page size, or the loader refuses the file.)
+a list called 'zeros after read-only data' is [
+    {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
+    {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 4},
+    {"name": ".bss", "kind": "bss", "size": 100, "alignment": 8}].
+a list called 'zeros placed' is 'place the sections' with 'zeros after read-only data' and 0x400000 and diagnostics.
+a map called 'the lone zeros' is element 3 of 'zeros placed'.
+'expect the number' with "the address of zero-filled data after read-only data" and 'the lone zeros''s "address" and 0x403038.
+a list called 'zeros segments' is 'the segments of' with 'zeros placed' and 0x400000 and 0x120.
+a map called 'zeros segment' is element 3 of 'zeros segments'.
+'expect the number' with "the address of a segment of zero-filled data" and 'zeros segment''s "address" and 0x403038.
+'expect the number' with "the file offset of a segment of zero-filled data" and 'zeros segment''s "file offset" and 0x2038.
+'expect the number' with "the file size of a segment of zero-filled data" and 'zeros segment''s "file size" and 0.
+'expect the number' with "the memory size of a segment of zero-filled data" and 'zeros segment''s "memory size" and 100.
 
 (A layout that cannot be honoured is refused, with one diagnostic for each
  thing wrong and the error flag raised.)
