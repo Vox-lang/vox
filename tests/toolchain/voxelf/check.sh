@@ -4,10 +4,13 @@
 # Every program in the corpus is compiled to assembly once, then made into
 # an executable twice: by nasm -f elf64 and ld, exactly as the compiler does
 # it, and by nasm -f bin and vox-elf (tools/voxelf/nasm-image.sh). The two
-# must agree on the flags and alignment of every segment readelf -l lists,
-# and, run with the same arguments and standard input, must write the same
-# standard output and standard error and exit with the same status, byte
-# for byte.
+# must agree on the file offset, address, file size, flags and alignment of
+# every segment readelf -l lists, and, run with the same arguments and
+# standard input, must write the same standard output and standard error
+# and exit with the same status, byte for byte. A program with read-only
+# data must also come out of vox-elf no larger than ld's build of it with
+# its symbols stripped, since vox-elf writes no symbols: the file is packed
+# as ld packs it, with no page of zeros between the segments.
 #
 # The corpus: every examples/*.vox that compiles on its own, the voxos
 # system programs, and the vox-coreutils tools. The vox-coreutils suites
@@ -51,7 +54,7 @@ if [ -f "$coreutils/test/corpus.sh" ]; then
     bash "$coreutils/test/corpus.sh" "$work/suite-corpus" > /dev/null
 fi
 
-linked=() matched_layout=() ran_alike=() differed=() skipped=()
+linked=() matched_layout=() no_larger=() ran_alike=() differed=() skipped=()
 cases_alike=0 cases_differed=0
 
 # Programs that cannot run here, with the reason. They are still linked both
@@ -96,13 +99,19 @@ suite_is_safe() {
     esac
 }
 
-# The flags and alignment of every segment, in order. readelf -lW writes the
+# The file offset, address, file size, flags and alignment of every segment,
+# in order. The memory size is left out: nasm -f bin and ld round the end of
+# the zero-filled data differently, by a few bytes. readelf -lW writes the
 # flags with spaces in them ("R E"), between the memory size and the
 # alignment.
 segment_shape() {
     readelf -lW "$1" | awk '$1 ~ /^(LOAD|GNU_STACK)$/ {
         flags = ""; for (i = 7; i < NF; i++) flags = flags $i
-        print $1, flags, $NF }'
+        print $1, $2, $3, $5, flags, $NF }'
+}
+
+has_read_only_data() {
+    readelf -SW "$1" | grep -q ' \.rodata '
 }
 
 # One run of one executable in a fresh copy of the fixtures, always at the
@@ -168,7 +177,7 @@ check_program() {
     fi
     linked+=("$label")
     if [ "$(segment_shape "$directory/$name.ld")" != "$(segment_shape "$directory/$name.elf")" ]; then
-        differed+=("$label (segments differ from ld's: $(segment_shape "$directory/$name.elf" | tr '\n' ';'))")
+        differed+=("$label (segments differ from ld's: $(segment_shape "$directory/$name.elf" | tr '\n' ';') where ld has $(segment_shape "$directory/$name.ld" | tr '\n' ';'))")
         return
     fi
     if ! readelf -S "$directory/$name.elf" > /dev/null 2>&1 || ! objdump -d "$directory/$name.elf" > /dev/null 2>&1; then
@@ -176,6 +185,16 @@ check_program() {
         return
     fi
     matched_layout+=("$label")
+    if has_read_only_data "$directory/$name.ld"; then
+        strip -o "$directory/$name.stripped" "$directory/$name.ld"
+        local ld_size elf_size
+        ld_size=$(stat -c %s "$directory/$name.stripped") elf_size=$(stat -c %s "$directory/$name.elf")
+        if [ "$elf_size" -gt "$ld_size" ]; then
+            differed+=("$label (vox-elf wrote $elf_size bytes, stripped ld $ld_size)")
+            return
+        fi
+        no_larger+=("$label")
+    fi
 
     local reason
     reason=$(reason_not_to_run "$label")
@@ -268,7 +287,8 @@ else
     skipped+=("the vox-coreutils tools (set COREUTILS_SRC to a vox-coreutils checkout to include them)")
 fi
 
-echo "linked by vox-elf: ${#linked[@]}; same segment flags and alignments as ld: ${#matched_layout[@]}"
+echo "linked by vox-elf: ${#linked[@]}; same segments as ld: ${#matched_layout[@]};" \
+     "with read-only data and no larger than stripped ld: ${#no_larger[@]}"
 echo "ran identically to ld: ${#ran_alike[@]} programs: ${ran_alike[*]}"
 for entry in "${skipped[@]}"; do echo "skipped: $entry"; done
 for entry in "${differed[@]}"; do echo "DIFFERED: $entry"; done

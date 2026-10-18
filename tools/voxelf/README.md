@@ -53,8 +53,8 @@ separated by spaces. A blank line, and a line whose first word starts with
 image hello.image
 base 0x400000
 section .text text size 303 alignment 16 address 0x4000f0 offset 0
-section .data data size 102 alignment 16 address 0x401000 offset 3856
-section .bss bss size 32 alignment 16 address 0x401070
+section .data data size 102 alignment 4 address 0x401000 offset 3856
+section .bss bss size 32 alignment 4 address 0x401068
 symbol _start 0x4001df
 ```
 
@@ -74,14 +74,28 @@ alignments, and writes it back with a `base` line and every section's
 
 ## Layout
 
-The file starts with the ELF header and the program headers, inside the text
-segment, and the code follows at the next multiple of its alignment: the way
-`ld` lays out a static executable. Read-only data, when there is any, gets a
-segment of its own on the next page; initialised data starts the next page
-after that, with the zero-filled data after it in memory, in the same
-segment, its memory size larger than its file size. Every segment starts on a
-page boundary in the file and in memory, so file offsets and addresses agree
-modulo 4096 as the loader requires.
+voxelf lays a program out as `ld` lays out a static executable. The file
+starts with the ELF header and the program headers, inside the text segment,
+and every section starts at the next multiple of its own alignment.
+
+- The code follows the headers.
+- The segment after the code starts on the next page boundary of the file,
+  and the next one in memory, so the pages of the file that hold code hold
+  nothing else, and no data is ever mapped executable.
+- Read-only data, when there is any, gets that segment. Initialised data then
+  follows it in the file with no padding but its own alignment, and starts in
+  memory on the first page after the read-only data ends, at the same place
+  in that page as in its page of the file. With no read-only data,
+  initialised data starts the page after the code instead.
+- Zero-filled data follows the initialised data in memory, in the same
+  segment, which makes its memory size larger than its file size.
+
+So every segment's file offset and address agree modulo 4096, as the loader
+requires, no two segments share a page of memory, so each keeps its own
+permissions, and the file holds no page of zeros between the read-only data
+and the initialised data. For each program in the test corpus, every segment
+has the file offset, address and file size `ld` gives it, and the file is as
+long as `ld`'s once its symbols are stripped.
 
 | Segment | Flags | Holds |
 | --- | --- | --- |
@@ -176,7 +190,9 @@ It builds the library and `vox-elf`, then runs each test in turn:
 - `headers.vox`: the ELF header and two program headers compared byte for
   byte with bytes written out by hand from `ld`'s output for
   `examples/hello.vox` and `examples/pi.vox`, and the layout of both programs'
-  sections, which matches `ld`'s addresses for the first.
+  sections, which must give `ld`'s addresses and file offsets, down to pi's
+  writable segment, whose program header is built again from the layout and
+  compared with `ld`'s bytes.
 - `refusals.sh`: every refusal above, with its exit status, its words and the
   absence of an output; the exit status of a run with more errors than a
   status can hold; one program linked from hand-written bytes and run; and
@@ -186,8 +202,10 @@ It builds the library and `vox-elf`, then runs each test in turn:
   its own, and any further programs `check.sh` is pointed at (its header
   names the variables), is linked twice: by `nasm -f elf64` and `ld` as the
   compiler does it, and by `nasm-image.sh` and `vox-elf`. Both executables
-  must show the same flags and alignment for every segment in `readelf -l`,
-  and must give the same standard output, standard error, exit status and
+  must show the same file offset, address, file size, flags and alignment for
+  every segment in `readelf -l`; a program with read-only data must come out
+  of `vox-elf` no larger than the `ld` build with its symbols stripped; and
+  both must give the same standard output, standard error, exit status and
   files left behind when run with the same arguments and input. A program
   that needs root is linked and its segments compared, but it is not run;
   one that does not compile on its own is left out. Each is listed as

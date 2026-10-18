@@ -135,8 +135,9 @@ To 'the program header size'. Return a number, 56.
 
 To 'the section header size'. Return a number, 64.
 
-(The loader maps a segment a page at a time, so segments start on page
- boundaries and no section may ask for more alignment than a page.)
+(The loader maps a segment a page at a time, so a segment's file offset and
+ its address must agree modulo a page, and no section may ask for more
+ alignment than a page.)
 To 'the page size'. Return a number, 4096.
 
 To 'the loadable segment type'. Return a number, 1.
@@ -293,10 +294,16 @@ To 'check the sections' with a list called sections and a number called 'load ba
  back as a number. So the sections are appended to a fresh list instead.
 
  The file starts with the headers, inside the text segment, the way ld lays
- out a static executable. Each further segment starts on a fresh page in
- the file and in memory, so a file offset and its address always agree
- modulo the page size, which is what the loader requires. Inside a segment
- each section starts at the next multiple of its alignment.)
+ out a static executable, and every section starts at the next multiple of
+ its own alignment. The segment after the code starts on a fresh page of
+ the file, as ld keeps code apart, so no page of the file holds both code
+ and data and no data is mapped executable. After that the file is packed:
+ the writable data follows the read-only data at its own alignment, and
+ starts in memory on the first page after the read-only data ends, at the
+ same place in that page as in its page of the file. So a file offset and
+ its address always agree modulo the page size, which is what the loader
+ requires, no two segments share a page of memory, so each keeps its own
+ permissions, and the file carries no page of zeros between them.)
 To 'place the sections' with a list called sections and a number called 'load base' and a buffer called diagnostics.
     a list called placed is [].
     a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
@@ -314,25 +321,42 @@ To 'place the sections' with a list called sections and a number called 'load ba
     'place the sections of kind' with "rodata" and sections and placed and cursors and 'load base'.
     a number called 'data sections' is 'the number of sections of kind' with sections and "data".
     a number called 'zeroed sections' is 'the number of sections of kind' with sections and "bss".
-    If {'data sections' add 'zeroed sections'} is greater than 0 then, 'turn to a fresh page' with cursors.
+    a number called 'writable sections' is 'data sections' add 'zeroed sections'.
+    If 'writable sections' is greater than 0 and 'read-only sections' is 0 then, 'turn to a fresh page' with cursors.
+    If 'writable sections' is greater than 0 and 'read-only sections' is greater than 0 then, 'turn to the next page in memory' with cursors.
     'place the sections of kind' with "data" and sections and placed and cursors and 'load base'.
     'place the sections of kind' with "bss" and sections and placed and cursors and 'load base'.
     Return a list, placed.
 
-(A new segment starts on the next page boundary in the file, and at the
- matching address in memory.)
+(The segment after the code starts on the next page boundary of the file,
+ and on the next one in memory, so the pages of the file that hold code
+ hold nothing else.)
 To 'turn to a fresh page' with a map called cursors.
     a number called 'file cursor' is cursors's "file".
-    a number called 'page start' is 'the boundary at or after' with 'file cursor' and 'the page size'.
-    Set cursors's "file" to 'page start'.
-    Set cursors's "memory" to 'page start'.
+    a number called 'memory cursor' is cursors's "memory".
+    Set cursors's "file" to 'the boundary at or after' with 'file cursor' and 'the page size'.
+    Set cursors's "memory" to 'the boundary at or after' with 'memory cursor' and 'the page size'.
 
-(Places every section of one kind, in the order the caller listed them. Both
- cursors count bytes from the start of the file, which is the load base in
- memory. Zero-filled sections follow the others in memory and take no room
- in the file, so they move only the memory cursor, and each is given the
- file offset where the file's bytes stopped, as ld gives it. (The two cases
- are two ifs for the reason 'read the manifest' gives.)
+(A segment after the read-only data stays where the file has got to, and
+ moves in memory to the first page after the read-only data ends, at the
+ same place in that page as the file cursor is in its page. The two
+ cursors still agree modulo the page size, and the new segment shares no
+ page of memory with the one before it.)
+To 'turn to the next page in memory' with a map called cursors.
+    a number called 'file cursor' is cursors's "file".
+    a number called 'memory cursor' is cursors's "memory".
+    a number called 'page start' is 'the boundary at or after' with 'memory cursor' and 'the page size'.
+    Set cursors's "memory" to 'page start' add {'file cursor' modulo 'the page size'}.
+
+(Places every section of one kind, in the order the caller listed them. The
+ file cursor counts bytes from the start of the file and the memory cursor
+ from the load base. The two agree modulo the page size and no alignment is
+ larger than a page, so moving the file cursor to a section's alignment
+ moves the memory cursor the same distance to the same alignment.
+ Zero-filled sections follow the others in memory and take no room in the
+ file, so they move only the memory cursor, and each is given the file
+ offset where the file's bytes stopped, as ld gives it. (The two cases are
+ two ifs for the reason 'read the manifest' gives.)
 
  Each placed section is a fresh map with the caller's entries copied into
  it one by one, because of the Vox bug 'place the sections' describes: a
@@ -358,17 +382,19 @@ To 'place the sections of kind' with a text called kind and a list called sectio
                 Set cursors's "memory" to 'memory offset' add 'section size'.
             if kind is not "bss" then,
                 a number called 'file offset' is 'the boundary at or after' with 'file cursor' and alignment,
-                Set 'placed section''s "address" to 'load base' add 'file offset',
+                a number called 'memory offset' is 'memory cursor' add {'file offset' subtract 'file cursor'},
+                Set 'placed section''s "address" to 'load base' add 'memory offset',
                 Set 'placed section''s "file offset" to 'file offset',
                 Set cursors's "file" to 'file offset' add 'section size',
-                Set cursors's "memory" to 'file offset' add 'section size'.
+                Set cursors's "memory" to 'memory offset' add 'section size'.
             append 'placed section' to placed..
 
 (--- Segments -------------------------------------------------------------)
 
 (The loadable segments, read back off the placed sections. Each covers its
- sections from the first byte to the last; the text segment also covers the
- headers, which open the file inside it.)
+ sections from the first byte to the last, in the file and in memory, and
+ starts at its first section's file offset and address; the text segment
+ also covers the headers, which open the file inside it.)
 To 'the segments of' with a list called placed and a number called 'load base' and a number called 'header size'.
     a list called segments is [].
     'add the segment for' with placed and ["text"] and 'read and execute' and 'load base' and true and 'header size' and segments.
@@ -382,6 +408,7 @@ To 'the segments of' with a list called placed and a number called 'load base' a
 To 'add the segment for' with a list called placed and a list called kinds and a number called 'segment permissions' and a number called 'load base' and a boolean called 'holds the headers' and a number called 'header size' and a list called segments.
     a number called 'sections in it' is 0.
     a number called 'first offset' is 0.
+    a number called 'segment address' is 0.
     a number called 'file end' is 0.
     a number called 'memory end' is 0.
     (By position: a For each variable cannot be read as a map, LANGUAGE.md, Maps)
@@ -392,19 +419,26 @@ To 'add the segment for' with a list called placed and a list called kinds and a
             a number called 'file offset' is section's "file offset",
             a number called address is section's "address",
             a number called 'section size' is section's "size",
-            a number called 'memory offset' is address subtract 'load base',
-            if 'sections in it' is 0 then, Set 'first offset' to 'file offset', Set 'file end' to 'file offset', Set 'memory end' to 'memory offset'.
+            if 'sections in it' is 0 then, Set 'first offset' to 'file offset', Set 'segment address' to address, Set 'file end' to 'file offset', Set 'memory end' to address.
+            (Zero-filled data that opens a segment has no bytes, and the file
+             offset it was given is where the bytes before it stopped, short
+             of its address by its alignment's padding. The segment's offset
+             moves on by that padding, to agree with its address modulo the
+             page size, as the loader requires.)
+            if 'sections in it' is 0 and kind is "bss" then,
+                Set 'first offset' to 'file offset' add {{address subtract 'file offset'} modulo 'the page size'},
+                Set 'file end' to 'first offset'.
             if kind is not "bss" then, Set 'file end' to 'the larger of' with 'file end' and {'file offset' add 'section size'}.
-            Set 'memory end' to 'the larger of' with 'memory end' and {'memory offset' add 'section size'},
+            Set 'memory end' to 'the larger of' with 'memory end' and {address add 'section size'},
             increment 'sections in it'..
     If not 'holds the headers' and 'sections in it' is 0 then, Return.
     If 'holds the headers' then,
         Set 'first offset' to 0,
+        Set 'segment address' to 'load base',
         Set 'file end' to 'the larger of' with 'file end' and 'header size',
-        Set 'memory end' to 'the larger of' with 'memory end' and 'file end'.
-    a number called 'segment address' is 'load base' add 'first offset'.
+        Set 'memory end' to 'the larger of' with 'memory end' and {'load base' add 'file end'}.
     a number called 'file size' is 'file end' subtract 'first offset'.
-    a number called 'memory size' is 'memory end' subtract 'first offset'.
+    a number called 'memory size' is 'memory end' subtract 'segment address'.
     a map called segment is {"permissions": 'segment permissions', "file offset": 'first offset', "address": 'segment address', "file size": 'file size', "memory size": 'memory size'}.
     append segment to segments.
 
