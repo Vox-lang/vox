@@ -21,7 +21,7 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/voxelf-test.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/tests/toolchain/voxelf" "$scratch/tools/voxelf"
 cp "$here/headers.vox" "$scratch/tests/toolchain/voxelf/"
-cp "$vox_tree/tools/voxelf/voxelf.vox" "$scratch/tools/voxelf/"
+cp "$vox_tree/tools/voxelf/voxelf.vox" "$vox_tree/tools/voxelf/voxelf-body.vox" "$scratch/tools/voxelf/"
 if (cd "$scratch/tests/toolchain/voxelf" && vox headers.vox -o headers); then
     "$scratch/tests/toolchain/voxelf/headers" || failed=1
 else

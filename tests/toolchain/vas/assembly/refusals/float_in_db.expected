@@ -1,0 +1,1 @@
+float_in_db.asm:3: the floating-point number 1.5 needs dq, which holds the 8 bytes of a double

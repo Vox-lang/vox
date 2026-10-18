@@ -1,0 +1,1 @@
+equ_address.asm:4: the equ for message_end gives an address, which depends on where the sections are placed; vas takes an equ only as a number

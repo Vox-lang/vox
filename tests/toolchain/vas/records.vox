@@ -19,17 +19,17 @@
 see "../../../tools/vas/vas.vox".
 
 (How an operand the front end parsed is written in the dump.)
-To 'the operand signature of' of a map called operand.
+To 'the operand signature' of a map called operand.
   a text called 'operand kind' is operand's "kind".
   a text called 'size word' is operand's "size".
   If 'size word' is "" then, set 'size word' to "-".
   a text called signature is "".
-  If 'operand kind' is "register" then, set signature to 'the register signature of' of operand.
+  If 'operand kind' is "register" then, set signature to 'the register signature' of operand.
   If 'operand kind' is "memory" then, set signature to 'the memory signature' with operand and 'size word'.
   If 'operand kind' is "expression" then, set signature to 'the expression signature' with operand and 'size word'.
   Return a text, signature.
 
-To 'the register signature of' of a map called operand.
+To 'the register signature' of a map called operand.
   a text called 'register name' is operand's "register".
   a text called signature is "".
   Set signature to "reg {register name}".
@@ -72,7 +72,7 @@ To 'write the instruction' with a list called records and a number called 'recor
   append "{file written in}:{line written on}\t{mnemonic written}" to dump.
   For each 'operand position' from 1 to 'the operands''s length,
     a map called operand is element 'operand position' of 'the operands',
-    a text called signature is 'the operand signature of' of operand,
+    a text called signature is 'the operand signature' of operand,
     append "\t{signature}" to dump.
   append "\n" to dump.
 
