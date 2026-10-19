@@ -140,10 +140,57 @@ To 'the section header size'. Return a number, 64.
  alignment than a page.)
 To 'the page size'. Return a number, 4096.
 
+(The most memory the sections of one program may need, 128 TiB: one half of
+ the x86-64 address space. Holding every size and the total below it keeps
+ every sum voxelf works out far below 2^63, so none can wrap round to a
+ small number and pass a check.)
+To 'the largest span'. Return a number, 0x800000000000.
+
+(The two halves of the x86-64 address space where an address is canonical:
+ the lower half, from 0 up to 2^47, and the upper half, from
+ 0xffff800000000000 up to 2^64, where a kernel such as Linux is linked, at
+ 0xffffffff80000000. The addresses between the halves are not canonical, so
+ nothing can be mapped there, and a program lies wholly in one half or the
+ other. Vox holds a number of the upper half as the number below zero with
+ the same 64 bits, so the upper half is the numbers from -2^47 up to 0.
+ With every size below 2^47, every sum of an address and a size stays
+ between -2^47 and 2^48, far from wrapping round as Vox counts.)
+To 'the top of the lower half'. Return a number, 0x800000000000.
+
+To 'the bottom of the upper half'. Return a number, 0 subtract 0x800000000000.
+
+To 'is in the lower half' of a number called address.
+    If address is less than 0 then, Return a boolean, false.
+    Return a boolean, address is less than 'the top of the lower half'.
+
+To 'is in the upper half' of a number called address.
+    If address is greater than or equal to 0 then, Return a boolean, false.
+    Return a boolean, address is greater than or equal to 'the bottom of the upper half'.
+
+(Linux maps nothing below 64 KiB unless told to, its vm.mmap_min_addr
+ setting, so a program placed lower could not be started. The upper half
+ has no such floor.)
+To 'the lowest load base'. Return a number, 0x10000.
+
+(The most voxelf reads of a manifest and of an image. A manifest is a line
+ or two for each section and symbol, and an image is a program's bytes; a
+ file larger than these is refused before it can fill the memory, as
+ /dev/zero, which never ends, otherwise would.)
+To 'the largest manifest'. Return a number, 16777216.
+
+To 'the largest image'. Return a number, 268435456.
+
+(The largest number Vox holds, 2^63 - 1.)
+To 'the largest number'. Return a number, 0x7FFFFFFFFFFFFFFF.
+
 To 'the loadable segment type'. Return a number, 1.
 
 (PT_GNU_STACK: a segment that holds nothing and only says what the stack
- may do.)
+ may do. voxelf always writes one, read and write but not execute, which
+ is what ld writes for an object that carries a .note.GNU-stack section, as
+ every program the compiler writes does. It puts in the file that the stack
+ is not executable, where a program without the header gets whatever the
+ kernel defaults to, and older kernels map its stack executable.)
 To 'the stack segment type'. Return a number, 0x6474E551.
 
 (A segment's permissions are bits: 4 to read, 2 to write, 1 to execute.)
@@ -262,8 +309,17 @@ To 'the program header count for' with a list called sections.
     Return a number, headers.
 
 (Everything placement needs to be true of the sections, checked before any
- of them is placed, so a bad manifest gets every complaint in one run.)
+ of them is placed, so a bad manifest gets every complaint in one run. The
+ sizes are added up only while the total stays within the largest span, so
+ the total itself can never wrap round. A load base must lie in one of the
+ two halves of the address space; a base between them is refused here, and
+ 'place the sections' refuses memory that runs on out of its half.)
 To 'check the sections' with a list called sections and a number called 'load base' and a buffer called diagnostics.
+    a list called 'names seen' is [].
+    a number called 'total size' is 0.
+    a boolean called 'the total is too large' is false.
+    a number called 'half of the address space' is 'the largest span'.
+    a number called 'lowest base' is 'the lowest load base'.
     (By position: a For each variable cannot be read as a map, LANGUAGE.md, Maps)
     For each position from 1 to sections's length,
         a map called section is element position of sections,
@@ -271,13 +327,26 @@ To 'check the sections' with a list called sections and a number called 'load ba
         a text called kind is section's "kind",
         a number called 'section size' is section's "size",
         a number called alignment is section's "alignment",
+        if 'is one of' with 'section name' and 'names seen' then, 'report' with diagnostics and "section {section name} is described more than once; describe each section once".
+        append 'section name' to 'names seen',
         if not 'is a known kind' of kind then, 'report' with diagnostics and "section {section name}: '{kind}' is not a kind of section; a section is text, rodata, data or bss".
         if 'section size' is less than 0 then, 'report' with diagnostics and "section {section name} has no size".
+        if 'section size' is greater than 'half of the address space' then, 'report' with diagnostics and "section {section name}: a size of {section size} bytes is more than the {half of the address space} bytes of one half of the address space".
+        if 'section size' is greater than 0 and 'section size' is less than or equal to 'half of the address space' and not 'the total is too large' then,
+            Set 'total size' to 'total size' add 'section size',
+            if 'total size' is greater than 'half of the address space' then, Set 'the total is too large' to true..
         if not 'is a power of two' of alignment then, 'report' with diagnostics and "section {section name}: an alignment of {alignment} is not a power of two".
         if alignment is greater than 'the page size' then, 'report' with diagnostics and "section {section name}: an alignment of {alignment} is more than a page, which the loader cannot honour"..
+    If 'the total is too large' then, 'report' with diagnostics and "the sections need more than the {half of the address space} bytes of one half of the address space".
     a number called 'text sections' is 'the number of sections of kind' with sections and "text".
     If 'text sections' is 0 then, 'report' with diagnostics and "there is no text section, so the executable would have nothing to run".
-    If 'load base' modulo 'the page size' is not 0 then, 'report' with diagnostics and "the load base {load base:x} does not start a page".
+    If 'load base' bit-and {'the page size' subtract 1} is not 0 then, 'report' with diagnostics and "the load base {load base:x} does not start a page".
+    a boolean called 'it is in the lower half' is 'is in the lower half' of 'load base'.
+    a boolean called 'it is in the upper half' is 'is in the upper half' of 'load base'.
+    If 'it is in the lower half' and 'load base' is less than 'the lowest load base' then, 'report' with diagnostics and "the load base {load base:x} is below {lowest base:x}, where Linux maps nothing by default, so the program could not be started".
+    a number called 'top of the lower half' is 'the top of the lower half'.
+    a number called 'bottom of the upper half' is 'the bottom of the upper half'.
+    If not 'it is in the lower half' and not 'it is in the upper half' then, 'report' with diagnostics and "the load base {load base:x} lies between {top of the lower half:x} and {bottom of the upper half:x}, between the two halves of the address space, where no address is canonical and nothing can be mapped".
 
 (--- Placement ------------------------------------------------------------)
 
@@ -288,10 +357,11 @@ To 'check the sections' with a list called sections and a number called 'load ba
 
  Each section is a map holding "name", "kind", "size" and "alignment". What
  comes back is a new list of the same sections in layout order, each with
- "address" and "file offset" added. It is a new list rather than the
- caller's list changed in place because of a Vox bug, reported, not yet
- numbered: a map read out of a list parameter and set back into it comes
- back as a number. So the sections are appended to a fresh list instead.
+ "address" and "file offset" added. It is a new list because layout order
+ groups the sections by kind, which need not be the order the caller gave,
+ and the caller's list is left as it was. Each section in it is the copy
+ 'place the sections of kind' makes, which needs the naming-copy fix (#128)
+ and the fix for #156, unreleased as of 0.4.16; see docs/bugs/unreleased.md.
 
  The file starts with the headers, inside the text segment, the way ld lays
  out a static executable, and every section starts at the next multiple of
@@ -300,10 +370,18 @@ To 'check the sections' with a list called sections and a number called 'load ba
  and data and no data is mapped executable. After that the file is packed:
  the writable data follows the read-only data at its own alignment, and
  starts in memory on the first page after the read-only data ends, at the
- same place in that page as in its page of the file. So a file offset and
- its address always agree modulo the page size, which is what the loader
- requires, no two segments share a page of memory, so each keeps its own
- permissions, and the file carries no page of zeros between them.)
+ same place in that page as in its page of the file, unless a fresh page
+ would save a page of memory, when it starts on one, as ld chooses (see 'a
+ fresh page saves memory for'). So a file offset and its address always
+ agree modulo the page size, which is what the loader requires, and no two
+ segments share a page of memory, so each keeps its own permissions.
+
+ The cursors count from the start of the file and from the load base, so
+ every number placement works with is small and at least zero. Every
+ segment must lie wholly in the half of the address space its load base is
+ in: a program whose memory would run on from the lower half into the
+ addresses between the halves, or past the top of the upper half, where it
+ would wrap round to 0, is refused.)
 To 'place the sections' with a list called sections and a number called 'load base' and a buffer called diagnostics.
     a list called placed is [].
     a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
@@ -322,11 +400,61 @@ To 'place the sections' with a list called sections and a number called 'load ba
     a number called 'data sections' is 'the number of sections of kind' with sections and "data".
     a number called 'zeroed sections' is 'the number of sections of kind' with sections and "bss".
     a number called 'writable sections' is 'data sections' add 'zeroed sections'.
+    a boolean called 'it follows read-only data' is false.
+    If 'writable sections' is greater than 0 and 'read-only sections' is greater than 0 then, Set 'it follows read-only data' to true.
+    a boolean called 'a fresh page saves memory' is false.
+    If 'it follows read-only data' then, Set 'a fresh page saves memory' to 'a fresh page saves memory for' with sections and cursors.
     If 'writable sections' is greater than 0 and 'read-only sections' is 0 then, 'turn to a fresh page' with cursors.
-    If 'writable sections' is greater than 0 and 'read-only sections' is greater than 0 then, 'turn to the next page in memory' with cursors.
+    If 'it follows read-only data' and 'a fresh page saves memory' then, 'turn to a fresh page' with cursors.
+    If 'it follows read-only data' and not 'a fresh page saves memory' then, 'turn to the next page in memory' with cursors.
     'place the sections of kind' with "data" and sections and placed and cursors and 'load base'.
     'place the sections of kind' with "bss" and sections and placed and cursors and 'load base'.
+    a number called 'memory needed' is cursors's "memory".
+    If 'memory needed' is greater than 'the largest span' then, 'report' with diagnostics and "the sections need {memory needed} bytes of memory once aligned, more than one half of the address space".
+    (The segments run from the load base to the end of the last one, so
+     they lie in the base's half when that end does. ld pads the last
+     segment's memory to 8 bytes and the loader maps whole pages, and both
+     ends of each half are multiples of a page, so neither padding moves an
+     end that is inside the half outside it.)
+    a number called 'top of the lower half' is 'the top of the lower half'.
+    If {'is in the lower half' of 'load base'} and 'memory needed' is greater than {'top of the lower half' subtract 'load base'} then, 'report' with diagnostics and "the sections need {memory needed} bytes of memory, which from the load base {load base:x} would run past {top of the lower half:x}, the top of the lower half of the address space, into the addresses between the halves, where no address is canonical".
+    (The distance from an address of the upper half to 2^64 is the number
+     below zero that Vox holds it as, negated)
+    If {'is in the upper half' of 'load base'} and 'memory needed' is greater than {0 subtract 'load base'} then, 'report' with diagnostics and "the sections need {memory needed} bytes of memory, which from the load base {load base:x} would run past the top of the address space and wrap round to 0".
+    Set 'errors found' to 'the errors since' with 'errors before' and diagnostics.
+    a list called 'nothing placed' is [].
+    If 'errors found' is greater than 0 then, Return a list, 'nothing placed'.
     Return a list, placed.
+
+(Where ld starts the writable segment when read-only data comes before it.
+ Its linker script places it with DATA_SEGMENT_ALIGN, which first tries the
+ place this file uses by default, after the last page of the read-only
+ data at the same place in the page as the file has got to, costing no
+ bytes of file. If the segment would then start part way into one page and
+ end part way into another, and the two parts would fit together in one
+ page, starting on a fresh page needs one page less of memory, for at most
+ a page of padding in the file, and ld takes that instead. The end ld
+ measures is DATA_SEGMENT_END, after the zero-filled data, padded to 8
+ bytes.
+
+ The test is made on copies, so the cursors are left as they were: a map
+ named from another is a copy of its own (LANGUAGE.md, Naming copies). This
+ needs the naming-copy fix (#128), unreleased as of 0.4.16; see
+ docs/bugs/unreleased.md.)
+To 'a fresh page saves memory for' with a list called sections and a map called cursors.
+    a map called 'trial cursors' is cursors.
+    a list called 'trial placement' is [].
+    'turn to the next page in memory' with 'trial cursors'.
+    a number called 'segment start' is 'trial cursors''s "memory".
+    (Only the cursors are read afterwards, so the trial places from a base of 0)
+    'place the sections of kind' with "data" and sections and 'trial placement' and 'trial cursors' and 0.
+    'place the sections of kind' with "bss" and sections and 'trial placement' and 'trial cursors' and 0.
+    a number called 'segment end' is 'the boundary at or after' with {'trial cursors''s "memory"} and 8.
+    a number called 'part of its first page' is {'the page size' subtract {'segment start' modulo 'the page size'}} modulo 'the page size'.
+    a number called 'part of its last page' is 'segment end' modulo 'the page size'.
+    If 'part of its first page' is 0 or 'part of its last page' is 0 then, Return a boolean, false.
+    If {'segment start' divide 'the page size'} is {'segment end' divide 'the page size'} then, Return a boolean, false.
+    Return a boolean, {'part of its first page' add 'part of its last page'} is less than or equal to 'the page size'.
 
 (The segment after the code starts on the next page boundary of the file,
  and on the next one in memory, so the pages of the file that hold code
@@ -355,22 +483,23 @@ To 'turn to the next page in memory' with a map called cursors.
  moves the memory cursor the same distance to the same alignment.
  Zero-filled sections follow the others in memory and take no room in the
  file, so they move only the memory cursor, and each is given the file
- offset where the file's bytes stopped, as ld gives it. (The two cases are
- two ifs for the reason 'read the manifest' gives.)
+ offset where the file's bytes stopped, as ld gives it.
 
- Each placed section is a fresh map with the caller's entries copied into
- it one by one, because of the Vox bug 'place the sections' describes: a
- map read out of a list parameter is stored as a bare number by any list it
- is put into, so the map read out is never appended itself.)
+ Each placed section is a copy of the caller's, so the caller's sections
+ are left as they were (LANGUAGE.md, Naming copies). The copy needs the
+ naming-copy fix (#128), and appending a map read out of a list parameter
+ into a local needs the fix for #156, both unreleased as of 0.4.16; see
+ docs/bugs/unreleased.md. The two kinds of section are an If and an
+ Otherwise, and the periods that close the Otherwise, the If around it and
+ the loop need the Otherwise-period fix (#160), unreleased as of 0.4.16; see
+ docs/bugs/unreleased.md.)
 To 'place the sections of kind' with a text called kind and a list called sections and a list called placed and a map called cursors and a number called 'load base'.
     (By position: a For each variable cannot be read as a map, LANGUAGE.md, Maps)
     For each position from 1 to sections's length,
         a map called section is element position of sections,
         a text called 'its kind' is section's "kind",
         if 'its kind' is kind then,
-            a map called 'placed section' is {},
-            For each key in section's keys,
-                Set 'placed section''s "{key}" to section's "{key}".
+            a map called 'placed section' is section,
             a number called alignment is section's "alignment",
             a number called 'section size' is section's "size",
             a number called 'file cursor' is cursors's "file",
@@ -380,7 +509,7 @@ To 'place the sections of kind' with a text called kind and a list called sectio
                 Set 'placed section''s "address" to 'load base' add 'memory offset',
                 Set 'placed section''s "file offset" to 'file cursor',
                 Set cursors's "memory" to 'memory offset' add 'section size'.
-            if kind is not "bss" then,
+            Otherwise,
                 a number called 'file offset' is 'the boundary at or after' with 'file cursor' and alignment,
                 a number called 'memory offset' is 'memory cursor' add {'file offset' subtract 'file cursor'},
                 Set 'placed section''s "address" to 'load base' add 'memory offset',
@@ -404,11 +533,15 @@ To 'the segments of' with a list called placed and a number called 'load base' a
 
 (One segment for every placed section whose kind is among kinds. A group
  with no sections has no segment, except the one that holds the headers:
- it starts at the very beginning of the file, whatever else it holds.)
+ it starts at the very beginning of the file, whatever else it holds.
+
+ Memory is counted from the load base, as placement counts it, so every
+ number compared here is small and at least zero, wherever the base is.)
 To 'add the segment for' with a list called placed and a list called kinds and a number called 'segment permissions' and a number called 'load base' and a boolean called 'holds the headers' and a number called 'header size' and a list called segments.
     a number called 'sections in it' is 0.
+    a boolean called 'it holds zero-filled data' is false.
     a number called 'first offset' is 0.
-    a number called 'segment address' is 0.
+    a number called 'segment start' is 0.
     a number called 'file end' is 0.
     a number called 'memory end' is 0.
     (By position: a For each variable cannot be read as a map, LANGUAGE.md, Maps)
@@ -418,39 +551,53 @@ To 'add the segment for' with a list called placed and a list called kinds and a
         if 'is one of' with kind and kinds then,
             a number called 'file offset' is section's "file offset",
             a number called address is section's "address",
+            a number called 'memory offset' is address subtract 'load base',
             a number called 'section size' is section's "size",
-            if 'sections in it' is 0 then, Set 'first offset' to 'file offset', Set 'segment address' to address, Set 'file end' to 'file offset', Set 'memory end' to address.
-            (Zero-filled data that opens a segment has no bytes, and the file
-             offset it was given is where the bytes before it stopped, short
-             of its address by its alignment's padding. The segment's offset
-             moves on by that padding, to agree with its address modulo the
-             page size, as the loader requires.)
+            if 'sections in it' is 0 then, Set 'first offset' to 'file offset', Set 'segment start' to 'memory offset', Set 'file end' to 'file offset', Set 'memory end' to 'memory offset'.
+            (A segment that opens with zero-filled data has no bytes in the
+             file, and its file offset only has to agree with its address
+             modulo the page size. ld gives it the address's place in its
+             page, or a whole page when that place is 0.)
             if 'sections in it' is 0 and kind is "bss" then,
-                Set 'first offset' to 'file offset' add {{address subtract 'file offset'} modulo 'the page size'},
+                Set 'first offset' to 'memory offset' modulo 'the page size',
+                if 'first offset' is 0 then, Set 'first offset' to 'the page size'.
                 Set 'file end' to 'first offset'.
+            if kind is "bss" then, Set 'it holds zero-filled data' to true.
             if kind is not "bss" then, Set 'file end' to 'the larger of' with 'file end' and {'file offset' add 'section size'}.
-            Set 'memory end' to 'the larger of' with 'memory end' and {address add 'section size'},
+            Set 'memory end' to 'the larger of' with 'memory end' and {'memory offset' add 'section size'},
             increment 'sections in it'..
     If not 'holds the headers' and 'sections in it' is 0 then, Return.
     If 'holds the headers' then,
         Set 'first offset' to 0,
-        Set 'segment address' to 'load base',
+        Set 'segment start' to 0,
         Set 'file end' to 'the larger of' with 'file end' and 'header size',
-        Set 'memory end' to 'the larger of' with 'memory end' and {'load base' add 'file end'}.
+        Set 'memory end' to 'the larger of' with 'memory end' and 'file end'.
+    (ld's linker script pads .bss to a multiple of 8 bytes, with ALIGN(. != 0
+     ? 64 / 8 : 1) inside it, and the segment ends where .bss ends)
+    If 'it holds zero-filled data' then, Set 'memory end' to 'the boundary at or after' with 'memory end' and 8.
     a number called 'file size' is 'file end' subtract 'first offset'.
-    a number called 'memory size' is 'memory end' subtract 'segment address'.
+    a number called 'memory size' is 'memory end' subtract 'segment start'.
+    a number called 'segment address' is 'load base' add 'segment start'.
     a map called segment is {"permissions": 'segment permissions', "file offset": 'first offset', "address": 'segment address', "file size": 'file size', "memory size": 'memory size'}.
     append segment to segments.
 
 (--- Writing --------------------------------------------------------------)
 
-(Every check that has to pass before a byte is written. A section that
- carries "assembled address" was assembled for that address, and is refused
- if placement puts it anywhere else, since its code would point at the
- wrong places. A section with bytes needs them to lie inside the image, and
- the entry point has to lie inside the code.)
+(Every check that has to pass before a byte is written. Every section must
+ say, as "assembled address", the address it was assembled for, and is
+ refused if placement puts it anywhere else: the image's code and data
+ point at the places they were assembled for, and voxelf applies no
+ relocations to move them. A section with bytes needs them to lie inside
+ the image, and the entry point has to lie inside the code.
+
+ The image bounds are compared without adding the offset to the size, so
+ an offset near 2^63 cannot wrap round to a small number and pass. The
+ entry point is measured as its distance into each text section, which is
+ below the section's size only when it lies inside, wherever in the
+ address space the section is.)
 To 'check the placed sections' with a list called placed and a buffer called image and a number called 'entry address' and a buffer called diagnostics.
     a boolean called 'the entry is in the code' is false.
+    a number called 'image size' is image's size.
     (By position: a For each variable cannot be read as a map, LANGUAGE.md, Maps)
     For each position from 1 to placed's length,
         a map called section is element position of placed,
@@ -460,6 +607,7 @@ To 'check the placed sections' with a list called placed and a buffer called ima
         a number called 'section size' is section's "size",
         a boolean called 'it names its address' is 'has the key' with section and "assembled address",
         a boolean called 'it names its bytes' is 'has the key' with section and "image offset",
+        if not 'it names its address' then, 'report' with diagnostics and "section {section name} does not say the address it was assembled for, so nothing shows that its addresses are the ones voxelf lays out; give its address, {address:x}, if that is the one it was assembled for".
         if 'it names its address' then,
             a number called 'assembled address' is section's "assembled address",
             if 'assembled address' is not address then, 'report' with diagnostics and "section {section name} was assembled for {assembled address:x} but is placed at {address:x}; assemble it for the addresses voxelf lays out"..
@@ -467,10 +615,9 @@ To 'check the placed sections' with a list called placed and a buffer called ima
             if not 'it names its bytes' then, 'report' with diagnostics and "section {section name} does not say where its bytes start in the image".
             if 'it names its bytes' then,
                 a number called 'image offset' is section's "image offset",
-                a number called 'image end' is 'image offset' add 'section size',
-                a number called 'image size' is image's size,
-                if 'image offset' is less than 0 or 'image end' is greater than 'image size' then, 'report' with diagnostics and "section {section name} runs from {image offset} to {image end} in the image, which holds {image size} bytes"...
-        if kind is "text" and 'entry address' is greater than or equal to address and 'entry address' is less than {address add 'section size'} then, Set 'the entry is in the code' to true..
+                if 'image offset' is less than 0 or 'image offset' is greater than 'image size' or 'section size' is greater than {'image size' subtract 'image offset'} then, 'report' with diagnostics and "section {section name} runs for {section size} bytes from offset {image offset} in the image, which holds {image size} bytes"...
+        a number called 'distance into it' is 'entry address' subtract address,
+        if kind is "text" and 'distance into it' is greater than or equal to 0 and 'distance into it' is less than 'section size' then, Set 'the entry is in the code' to true..
     If not 'the entry is in the code' then, 'report' with diagnostics and "the entry point {entry address:x} is not inside a text section".
 
 (The names of the sections, each ending in a zero byte, after the empty name
@@ -568,9 +715,9 @@ To 'write the bytes' with a buffer called content and a text called path and a b
 
 (The writer for a Vox caller. The sections are maps as 'place the sections'
  takes them, each also holding "image offset", where its bytes start in the
- image, counting from 0, and, if it was assembled for a particular address,
- that address as "assembled address". Answers 0, or how many errors there
- were; nothing is written unless there were none.)
+ image, counting from 0, and "assembled address", the address it was
+ assembled for. Answers 0, or how many errors there were; nothing is
+ written unless there were none.)
 To 'write the executable and count the errors' with a list called sections and a buffer called image and a number called 'entry address' and a number called 'load base' and a text called 'output path' and a buffer called diagnostics.
     a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
     'write the executable' with sections and image and 'entry address' and 'load base' and 'output path' and diagnostics.
@@ -591,16 +738,24 @@ To 'write the executable' with a list called sections and a buffer called image 
 
 (--- Reading files --------------------------------------------------------)
 
-(The whole of a file, read a buffer at a time until a read comes back
- empty.)
-To 'the contents of' with a text called path.
+(The whole of a file, read 64 KiB at a time until a read comes back empty,
+ or nothing, with the complaint reported, once it has given more than
+ 'size limit' bytes. The pieces are read into a buffer of fixed size,
+ because one read into a dynamic buffer takes everything the file has, and
+ a file such as /dev/zero never runs out.)
+To 'the contents of' with a text called path and a number called 'size limit' and a buffer called diagnostics.
     Create a buffer called whole.
-    Create a buffer called chunk.
+    a buffer called piece is 65536 bytes in size.
     open a file for reading called source at path.
-    Read from source into chunk.
-    While chunk is not empty,
-        append chunk to whole,
-        Read from source into chunk.
+    Read from source into piece.
+    While piece is not empty,
+        append piece to whole,
+        if whole's size is greater than 'size limit' then,
+            'report' with diagnostics and "{path}: is more than {size limit} bytes long, more than voxelf reads",
+            Close source,
+            clear whole,
+            Return a buffer, whole.
+        Read from source into piece.
     Close source.
     Return a buffer, whole.
 
@@ -630,24 +785,26 @@ To 'is an elf file' with a buffer called content.
     If byte 4 of content is not 'F' then, Return a boolean, false.
     Return a boolean, true.
 
-(An ELF file handed to voxelf is never something it can link: a program
- reaches voxelf as a raw image and a manifest. Each kind of ELF file is
- refused with the reason, by name. The class is byte 5, the type the two
- bytes at offset 16, and the machine the two at offset 18.)
+(voxelf does not read ELF files yet: a program reaches it as a raw image
+ and a manifest. Each kind of ELF file is refused with what it is and what
+ voxelf takes instead. The class is byte 5, the type the two bytes at
+ offset 16, and the machine the two at offset 18.)
 To 'refuse the elf file' with a buffer called content and a text called path and a buffer called diagnostics.
     a number called 'elf class' is byte 5 of content.
     a number called 'file type' is {byte 17 of content} add {{byte 18 of content} multiply 256}.
     a number called machine is {byte 19 of content} add {{byte 20 of content} multiply 256}.
-    If 'elf class' is 1 then, 'report' with diagnostics and "{path}: is a 32-bit ELF file; voxelf writes 64-bit executables only", Return.
-    If machine is not 62 then, 'report' with diagnostics and "{path}: is built for ELF machine {machine}, not x86-64 (62); voxelf writes x86-64 executables only", Return.
-    If 'file type' is 1 then, 'report' with diagnostics and "{path}: is a relocatable object; voxelf applies no relocations, so assemble the program with nasm -f bin and describe the image with a manifest", Return.
-    If 'file type' is 3 then, 'report' with diagnostics and "{path}: is a shared object or a position-independent executable; voxelf writes static executables and links no shared objects", Return.
+    If 'elf class' is 1 then, 'report' with diagnostics and "{path}: is a 32-bit ELF file; voxelf does not read ELF files yet, and writes only 64-bit executables so far", Return.
+    If machine is not 62 then, 'report' with diagnostics and "{path}: is built for ELF machine {machine}, not x86-64 (62); voxelf does not read ELF files yet, and writes only x86-64 executables so far", Return.
+    If 'file type' is 1 then, 'report' with diagnostics and "{path}: is a relocatable object; voxelf does not read relocatable objects or apply relocations yet, so assemble the program with nasm -f bin and describe the image with a manifest", Return.
+    If 'file type' is 3 then, 'report' with diagnostics and "{path}: is a shared object or a position-independent executable; voxelf does not link shared objects or write position-independent executables yet, only static executables", Return.
     If 'file type' is 2 then, 'report' with diagnostics and "{path}: is already a linked executable", Return.
     'report' with diagnostics and "{path}: is an ELF file of type {file type}, which voxelf does not read".
 
 (--- The manifest ---------------------------------------------------------)
 
-(The words of one manifest line: runs of anything but spaces and tabs.)
+(The words of one manifest line: runs of anything but spaces, tabs and
+ carriage returns, so a manifest written with Windows line endings reads
+ as the same words.)
 To 'the words of' with a buffer called 'manifest line'.
     a list called words is [].
     Create a buffer called word.
@@ -656,37 +813,85 @@ To 'the words of' with a buffer called 'manifest line'.
         a boolean called 'it is a space' is false,
         if 'the byte' is ' ' then, Set 'it is a space' to true.
         if 'the byte' is '\t' then, Set 'it is a space' to true.
+        (13 is a carriage return, which has no escape of its own, LANGUAGE.md, Escape Sequences)
+        if 'the byte' is 13 then, Set 'it is a space' to true.
         if not 'it is a space' then, 'append the byte' with 'the byte' and word.
         if 'it is a space' and word's size is greater than 0 then, append "{word}" to words, clear word..
     If word's size is greater than 0 then, append "{word}" to words.
     Return a list, words.
 
-(A number as a manifest writes one: in decimal, or in hexadecimal after
- 0x. No size, alignment, address or offset is ever negative, so -1 is the
- answer when the word is not a number, with the complaint reported.)
-To 'the number in' with a text called word and a text called location and a buffer called diagnostics.
-    a number called amount is -1.
-    Set amount to word as a number.
-    On error 'report' with diagnostics and "{location}: '{word}' is not a number", Return a number, -1.
-    If amount is less than 0 then, 'report' with diagnostics and "{location}: {word} is negative", Return a number, -1.
+(The value of one digit, up to f in either case, or -1 when the byte is
+ not a digit.)
+To 'the value of the digit' with a number called 'the byte'.
+    If 'the byte' is greater than or equal to '0' and 'the byte' is less than or equal to '9' then, Return a number, 'the byte' subtract '0'.
+    If 'the byte' is greater than or equal to 'a' and 'the byte' is less than or equal to 'f' then, Return a number, 'the byte' subtract 'a' add 10.
+    If 'the byte' is greater than or equal to 'A' and 'the byte' is less than or equal to 'F' then, Return a number, 'the byte' subtract 'A' add 10.
+    Return a number, -1.
+
+(The 64 bits a manifest word spells, in decimal, or in hexadecimal after 0x
+ or 0X. A word that is not a number is reported, and reads as 0.
+
+ Both are read digit by digit rather than cast. A cast keeps the whole part
+ of a fraction, so "12.9" would read as 12 (LANGUAGE.md, Casting Rules), and
+ it refuses anything at or above 2^63, which an address can be. Up to sixteen hexadecimal digits give all 64 bits, so an
+ address in the upper half reads as the number below zero that has the same
+ bits, which is how Vox holds it. A decimal word must stay below 2^63.)
+To 'the bits spelled by' with a text called word and a text called location and a buffer called diagnostics.
+    a buffer called spelling is "{word}".
+    a number called base is 10.
+    a number called 'first digit' is 1.
+    If spelling's size is greater than 2 then,
+        if byte 1 of spelling is '0' and byte 2 of spelling is 'x' then, Set base to 16, Set 'first digit' to 3.
+        if byte 1 of spelling is '0' and byte 2 of spelling is 'X' then, Set base to 16, Set 'first digit' to 3..
+    a number called amount is 0.
+    a number called 'digits that count' is 0.
+    a boolean called 'every byte is a digit' is true.
+    a boolean called 'it is too large' is false.
+    If spelling's size is less than 1 then, Set 'every byte is a digit' to false.
+    For each position from 'first digit' to spelling's size,
+        a number called digit is 'the value of the digit' with {byte position of spelling},
+        if digit is less than 0 or digit is greater than or equal to base then, Set 'every byte is a digit' to false.
+        if 'every byte is a digit' and base is 16 then,
+            if 'digits that count' is greater than 0 or digit is greater than 0 then, increment 'digits that count'.
+            Set amount to {amount bit-shift-left 4} bit-or digit.
+        if 'every byte is a digit' and base is 10 then,
+            if amount is greater than {'the largest number' subtract digit} divide 10 then, Set 'it is too large' to true.
+            if not 'it is too large' then, Set amount to {amount multiply 10} add digit...
+    If not 'every byte is a digit' then, 'report' with diagnostics and "{location}: '{word}' is not a number", Return a number, 0.
+    If 'digits that count' is greater than 16 then, 'report' with diagnostics and "{location}: {word} has more than 64 bits", Return a number, 0.
+    If 'it is too large' then, 'report' with diagnostics and "{location}: {word} is 2^63 or more, which voxelf reads only in hexadecimal", Return a number, 0.
     Return a number, amount.
 
-(Reads a whole manifest, a line at a time. What the lines say is gathered
- into settings ("base", "image", and "image location", the line that named
- it), sections, and symbols, a map from each symbol's name to its address.
+(A size, an alignment or an offset: a number from 0 up to 2^63 - 1. -1 is
+ the answer when the word is not one, with the complaint reported.)
+To 'the number in' with a text called word and a text called location and a buffer called diagnostics.
+    a buffer called spelling is "{word}".
+    If byte 1 of spelling is '-' then, 'report' with diagnostics and "{location}: {word} is negative", Return a number, -1.
+    a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
+    a number called amount is 'the bits spelled by' with word and location and diagnostics.
+    If {'the number of diagnostics in' with diagnostics} is greater than 'errors before' then, Return a number, -1.
+    If amount is less than 0 then, 'report' with diagnostics and "{location}: {word} is 2^63 or more, more than any size, alignment or offset can be", Return a number, -1.
+    Return a number, amount.
 
- The two cases of a byte are two ifs rather than an if and an Otherwise
- because of a Vox bug, reported, not yet numbered: the periods stacked
- after an Otherwise branch close one level fewer than they say, so
- `Otherwise, ...` closing the loop with two periods would leave the loop
- open.)
+(An address: any 64 bits, the upper half of the address space included.)
+To 'the address in' with a text called word and a text called location and a buffer called diagnostics.
+    Return a number, 'the bits spelled by' with word and location and diagnostics.
+
+(Reads a whole manifest, a line at a time. What the lines say is gathered
+ into settings ("base" and "base location", the line that gave it, and
+ "image" and "image location", the line that named it), sections, and
+ symbols, a map from each symbol's name to its address.
+
+ The two cases of a byte are an If and an Otherwise, and the two periods
+ after the Otherwise, which close it and the loop, need the Otherwise-period
+ fix (#160), unreleased as of 0.4.16; see docs/bugs/unreleased.md.)
 To 'read the manifest' with a buffer called content and a text called 'manifest path' and a map called settings and a list called sections and a map called symbols and a buffer called diagnostics.
     Create a buffer called 'manifest line'.
     a number called 'line number' is 1.
     For each position from 1 to content's size,
         a number called 'the byte' is byte position of content,
         if 'the byte' is not '\n' then, 'append the byte' with 'the byte' and 'manifest line'.
-        if 'the byte' is '\n' then,
+        Otherwise,
             'read the manifest line' with 'manifest line' and "{manifest path}:{line number}" and settings and sections and symbols and diagnostics,
             clear 'manifest line',
             increment 'line number'..
@@ -708,8 +913,8 @@ To 'read the manifest line' with a buffer called 'manifest line' and a text call
     If keyword is "machine" then, 'read a machine line' with words and location and diagnostics, Return.
     If keyword is "class" then, 'read a class line' with words and location and diagnostics, Return.
     If keyword is "type" then, 'read a type line' with words and location and diagnostics, Return.
-    If keyword is "relocation" then, 'report' with diagnostics and "{location}: relocations are not supported; voxelf applies none, so every address in the image must already be final", Return.
-    If keyword is "interpreter" or keyword is "needed" then, 'report' with diagnostics and "{location}: dynamic linking is not supported; voxelf writes static executables with no interpreter and no dynamic section", Return.
+    If keyword is "relocation" then, 'report' with diagnostics and "{location}: voxelf does not apply relocations yet, so every address in the image must already be final", Return.
+    If keyword is "interpreter" or keyword is "needed" then, 'report' with diagnostics and "{location}: voxelf does not link dynamically yet; it writes static executables, with no interpreter and no dynamic section", Return.
     'report' with diagnostics and "{location}: '{keyword}' is not a manifest statement".
 
 (A line with the wrong number of words is reported with the shape it should
@@ -717,69 +922,102 @@ To 'read the manifest line' with a buffer called 'manifest line' and a text call
 To 'report the shape it should have' with a text called shape and a text called location and a buffer called diagnostics.
     'report' with diagnostics and "{location}: this line should read: {shape}".
 
-(section NAME KIND, then pairs: size BYTES, alignment BYTES, address WHERE
- (the address it was assembled for) and offset WHERE (where its bytes start
- in the image). file-offset is what a layout writes for the assembler, and
- is accepted and ignored here: voxelf works file offsets out for itself.)
+(section NAME KIND, then pairs, each said once: size BYTES, alignment
+ BYTES, address WHERE (the address it was assembled for) and offset WHERE
+ (where its bytes start in the image). file-offset is what a layout writes
+ for the assembler, and is read and set aside here: voxelf works file
+ offsets out for itself.)
 To 'read a section line' with a list called words and a text called location and a list called sections and a buffer called diagnostics.
     a number called 'word count' is words's length.
     If 'word count' is less than 3 then, 'report' with diagnostics and "{location}: a section line names the section and then its kind", Return.
     a text called 'section name' is element 2 of words.
     a text called kind is element 3 of words.
     a map called section is {"name": 'section name', "kind": kind, "size": -1, "alignment": 1}.
+    a list called 'keys said' is [].
     a number called 'pair start' is 4.
     While 'pair start' is less than or equal to 'word count',
         a text called key is element 'pair start' of words,
         if 'pair start' is 'word count' then, 'report' with diagnostics and "{location}: '{key}' has no value after it", Return.
         a text called 'number text' is element {'pair start' add 1} of words,
-        a number called amount is 'the number in' with 'number text' and location and diagnostics,
         if not 'is one of' with key and ["size", "alignment", "address", "offset", "file-offset"] then, 'report' with diagnostics and "{location}: '{key}' is not something a section line says".
-        if key is "size" then, Set section's "size" to amount.
-        if key is "alignment" then, Set section's "alignment" to amount.
-        if key is "address" then, Set section's "assembled address" to amount.
-        if key is "offset" then, Set section's "image offset" to amount.
+        if 'is one of' with key and 'keys said' then, 'report' with diagnostics and "{location}: '{key}' is said twice; a section line says each thing once".
+        append key to 'keys said',
+        if key is "size" then, Set section's "size" to 'the number in' with 'number text' and location and diagnostics.
+        if key is "alignment" then, Set section's "alignment" to 'the number in' with 'number text' and location and diagnostics.
+        if key is "address" then, Set section's "assembled address" to 'the address in' with 'number text' and location and diagnostics.
+        if key is "offset" then, Set section's "image offset" to 'the number in' with 'number text' and location and diagnostics.
+        (A file offset is voxelf's own to work out, so it is only read, to be
+         sure it is a number)
+        if key is "file-offset" then, a number called 'file offset given' is 'the number in' with 'number text' and location and diagnostics.
         Set 'pair start' to 'pair start' add 2.
     append section to sections.
 
+(A symbol has one address, so a second line for the same name is refused
+ rather than taken in place of the first.)
 To 'read a symbol line' with a list called words and a text called location and a map called symbols and a buffer called diagnostics.
     If words's length is not 3 then, 'report the shape it should have' with "symbol NAME ADDRESS" and location and diagnostics, Return.
     a text called 'symbol name' is element 2 of words.
     a text called 'number text' is element 3 of words.
-    a number called address is 'the number in' with 'number text' and location and diagnostics.
+    a number called address is 'the address in' with 'number text' and location and diagnostics.
+    a list called 'names so far' is symbols's keys.
+    If 'is one of' with 'symbol name' and 'names so far' then, 'report' with diagnostics and "{location}: the symbol {symbol name} is given a second time; a symbol has one address", Return.
     Set symbols's "{symbol name}" to address.
 
-(One image, because voxelf links one object. A second one is refused by
- name rather than silently replacing the first.)
+(Whether a path read from the manifest's directory climbs out of it: any
+ part of it between slashes is "..". A path from the root is not read from
+ that directory, so it is taken as it is written. The two periods after the
+ Otherwise, which close it and the loop, need the Otherwise-period fix
+ (#160), unreleased as of 0.4.16; see docs/bugs/unreleased.md.)
+To 'climbs out of its directory' with a text called path.
+    a buffer called spelling is "{path}".
+    If byte 1 of spelling is '/' then, Return a boolean, false.
+    Create a buffer called part.
+    For each position from 1 to spelling's size,
+        a number called 'the byte' is byte position of spelling,
+        if 'the byte' is '/' then,
+            if "{part}" is ".." then, Return a boolean, true.
+            clear part.
+        Otherwise,
+            'append the byte' with 'the byte' and part..
+    Return a boolean, "{part}" is "..".
+
+(One image, because voxelf links one so far. A second one is refused by
+ name rather than silently replacing the first. An image named from the
+ manifest's directory stays inside it, so a manifest and its image move
+ together and a manifest never reaches past the directory it stands in.)
 To 'read an image line' with a list called words and a text called location and a map called settings and a buffer called diagnostics.
     If words's length is not 2 then, 'report the shape it should have' with "image PATH" and location and diagnostics, Return.
     a text called 'image path' is element 2 of words.
+    If 'climbs out of its directory' with 'image path' then, 'report' with diagnostics and "{location}: the image {image path} climbs out of the manifest's directory with '..'; name an image inside that directory, or give its whole path from /", Return.
     a text called 'image so far' is settings's "image".
     a text called 'where it was named' is settings's "image location".
-    If 'image so far' is not empty then, 'report' with diagnostics and "{location}: linking several objects is not supported; voxelf links one image, and {where it was named} already named {image so far}", Return.
+    If 'image so far' is not empty then, 'report' with diagnostics and "{location}: voxelf does not link several images together yet; it links one, and {where it was named} already named {image so far}", Return.
     Set settings's "image" to 'image path'.
     Set settings's "image location" to location.
 
 To 'read a base line' with a list called words and a text called location and a map called settings and a buffer called diagnostics.
     If words's length is not 2 then, 'report the shape it should have' with "base ADDRESS" and location and diagnostics, Return.
+    a text called 'where it was given' is settings's "base location".
+    If 'where it was given' is not empty then, 'report' with diagnostics and "{location}: the load base is given a second time; {where it was given} already gave it", Return.
+    Set settings's "base location" to location.
     a text called 'number text' is element 2 of words.
-    a number called 'load base' is 'the number in' with 'number text' and location and diagnostics.
-    If 'load base' is not -1 then, Set settings's "base" to 'load base'.
+    Set settings's "base" to 'the address in' with 'number text' and location and diagnostics.
 
 To 'read a machine line' with a list called words and a text called location and a buffer called diagnostics.
     If words's length is not 2 then, 'report the shape it should have' with "machine x86-64" and location and diagnostics, Return.
     a text called machine is element 2 of words.
-    If not 'is one of' with machine and ["x86-64", "x86_64"] then, 'report' with diagnostics and "{location}: machine {machine} is not supported; voxelf writes x86-64 executables only".
+    If not 'is one of' with machine and ["x86-64", "x86_64"] then, 'report' with diagnostics and "{location}: voxelf does not write executables for {machine} yet, only for x86-64".
 
 To 'read a class line' with a list called words and a text called location and a buffer called diagnostics.
     If words's length is not 2 then, 'report the shape it should have' with "class 64" and location and diagnostics, Return.
     a text called 'bits wide' is element 2 of words.
-    If 'bits wide' is not "64" then, 'report' with diagnostics and "{location}: {bits wide}-bit ELF is not supported; voxelf writes 64-bit executables only".
+    If 'bits wide' is not "64" then, 'report' with diagnostics and "{location}: voxelf does not write {bits wide}-bit ELF files yet, only 64-bit ones".
 
 To 'read a type line' with a list called words and a text called location and a buffer called diagnostics.
     If words's length is not 2 then, 'report the shape it should have' with "type executable" and location and diagnostics, Return.
     a text called 'file type' is element 2 of words.
     If 'file type' is "executable" then, Return.
-    If 'file type' is "shared" then, 'report' with diagnostics and "{location}: shared objects are not supported; voxelf writes static executables only", Return.
+    If 'file type' is "shared" then, 'report' with diagnostics and "{location}: voxelf does not write shared objects yet, only static executables", Return.
     'report' with diagnostics and "{location}: '{file type}' is not a type of file voxelf writes; the only one is executable".
 
 (--- Linking --------------------------------------------------------------)
@@ -788,7 +1026,9 @@ To 'read a type line' with a list called words and a text called location and a 
  An ELF file is refused instead, with its reason.)
 To 'read the manifest at' with a text called 'manifest path' and a map called settings and a list called sections and a map called symbols and a buffer called diagnostics.
     If 'manifest path' is not available then, 'report' with diagnostics and "{manifest path}: there is no such file", Return.
-    a buffer called content is 'the contents of' with 'manifest path'.
+    a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
+    a buffer called content is 'the contents of' with 'manifest path' and 'the largest manifest' and diagnostics.
+    If {'the number of diagnostics in' with diagnostics} is greater than 'errors before' then, Return.
     If 'is an elf file' with content then, 'refuse the elf file' with content and 'manifest path' and diagnostics, Return.
     'read the manifest' with content and 'manifest path' and settings and sections and symbols and diagnostics.
 
@@ -796,7 +1036,7 @@ To 'read the manifest at' with a text called 'manifest path' and a map called se
  and leaves the counting to its caller.)
 To 'link the manifest' with a text called 'manifest path' and a text called 'output path' and a text called 'entry name' and a buffer called diagnostics.
     a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
-    a map called settings is {"base": 0x400000, "image": "", "image location": ""}.
+    a map called settings is {"base": 0x400000, "base location": "", "image": "", "image location": ""}.
     a list called sections is [].
     a map called symbols is {}.
     'read the manifest at' with 'manifest path' and settings and sections and symbols and diagnostics.
@@ -806,7 +1046,9 @@ To 'link the manifest' with a text called 'manifest path' and a text called 'out
     If 'image name' is empty then, 'report' with diagnostics and "{manifest path}: names no image, so there are no bytes to link", Return.
     a text called 'image path' is 'the path beside' with 'manifest path' and 'image name'.
     If 'image path' is not available then, 'report' with diagnostics and "{manifest path}: the image {image path} does not exist", Return.
-    a buffer called image is 'the contents of' with 'image path'.
+    a buffer called image is 'the contents of' with 'image path' and 'the largest image' and diagnostics.
+    Set 'errors found' to {'the number of diagnostics in' with diagnostics} subtract 'errors before'.
+    If 'errors found' is greater than 0 then, Return.
     a list called 'symbol names' is symbols's keys.
     If not 'is one of' with 'entry name' and 'symbol names' then, 'report' with diagnostics and "{manifest path}: there is no symbol called {entry name}, so the program has no entry point", Return.
     a number called 'entry address' is symbols's "{entry name}".
@@ -819,7 +1061,7 @@ To 'link the manifest' with a text called 'manifest path' and a text called 'out
  manifest', it leaves the counting to its caller.)
 To 'lay out the manifest' with a text called 'manifest path' and a text called 'output path' and a buffer called diagnostics.
     a number called 'errors before' is 'the number of diagnostics in' with diagnostics.
-    a map called settings is {"base": 0x400000, "image": "", "image location": ""}.
+    a map called settings is {"base": 0x400000, "base location": "", "image": "", "image location": ""}.
     a list called sections is [].
     a map called symbols is {}.
     'read the manifest at' with 'manifest path' and settings and sections and symbols and diagnostics.
@@ -900,7 +1142,8 @@ To 'lay out and keep the diagnostics' of a text called 'manifest path' and a tex
 To 'linker diagnostics' of a text called 'output path'.
     a text called 'diagnostics path' is 'the diagnostics path for' with 'output path'.
     If 'diagnostics path' is not available then, Return a text, "".
-    a buffer called diagnostics is 'the contents of' with 'diagnostics path'.
+    Create a buffer called 'complaints about the diagnostics'.
+    a buffer called diagnostics is 'the contents of' with 'diagnostics path' and 'the largest manifest' and 'complaints about the diagnostics'.
     Delete the file 'diagnostics path'.
     a text called 'what went wrong' is "{diagnostics}".
     Return a text, 'what went wrong'.

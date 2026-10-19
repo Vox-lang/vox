@@ -6,6 +6,11 @@
 # usage: tools/voxelf/build.sh [BUILD_DIR]
 #   BUILD_DIR defaults to $VOXELF_BUILD, else ${TMPDIR:-/tmp}/voxelf-build.
 #
+# The compiler is $VOX, else this tree's target/release/vox, else the vox on
+# PATH, and it must have the fixes voxelf needs, which no release up to
+# 0.4.16 carries: compiler.sh asks it, and the build stops with the reason
+# when it does not have them.
+#
 # The sources are copied into the build directory and compiled there, so
 # the compiler never runs inside a source tree. Run from a directory that
 # holds another Vox checkout, vox can pick up that checkout's runtime
@@ -14,8 +19,9 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 build=${1:-${VOXELF_BUILD:-${TMPDIR:-/tmp}/voxelf-build}}
+source "$here/compiler.sh"
 export VOX_CORE_PATH=${VOX_CORE_PATH:-/usr/share/vox/coreasm}
-vox=${VOX:-vox}
+check_the_compiler || exit 1
 
 mkdir -p "$build"
 build=$(cd "$build" && pwd)
@@ -25,6 +31,6 @@ cd "$build"
 "$vox" voxelf.vox --shared -o libvoxelf.so
 "$vox" vox-elf.vox -o vox-elf
 
-echo "built $build/libvoxelf.so, $build/libvoxelf.lib and $build/vox-elf"
+echo "built $build/libvoxelf.so, $build/libvoxelf.lib and $build/vox-elf with $vox"
 echo "exported symbols:"
 nm -D --defined-only libvoxelf.so | sed 's/^/  /'

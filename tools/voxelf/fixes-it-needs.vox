@@ -1,0 +1,34 @@
+(Whether the compiler has the fixes voxelf needs. They are on Vox main and
+ in no release up to 0.4.16: docs/bugs/unreleased.md, #128, #156 and #160.
+ Each part prints what a compiler with its fix prints, and build.sh compares
+ the whole output, so a compiler without one of them answers differently, or
+ stops on a signal, and is refused before voxelf is built with it.)
+
+(#156: a map read out of a list parameter into a local, then appended, is
+ the map, as 'place the sections of kind' appends each section it places.)
+To 'copy over' with a list called sections and a list called placed.
+    a map called section is element 1 of sections.
+    append section to placed.
+
+(#128, naming copies: a map named from another is a copy of its own, as the
+ trial cursors in 'a fresh page saves memory for' are.)
+a map called cursors is {"file": 1}.
+a map called 'trial cursors' is cursors.
+Set 'trial cursors''s "file" to 2.
+a number called 'file cursor' is cursors's "file".
+Print "a named map is a copy: {file cursor}".
+
+a list called sections is [{"name": ".text"}].
+a list called placed is [].
+'copy over' with sections and placed.
+Print "a section read out and appended: {placed}".
+
+(#160: the period after an Otherwise closes the chain, and one more closes
+ the loop around it, as in 'read the manifest'.)
+a number called 'rounds run' is 0.
+a number called 'lines run after the loop' is 0.
+For each round from 1 to 2,
+    If round is 1 then, increment 'rounds run'.
+    Otherwise, increment 'rounds run'..
+increment 'lines run after the loop'.
+Print "after an Otherwise: {rounds run} rounds, then {lines run after the loop} line after the loop".
