@@ -1,0 +1,12 @@
+a timer called clock.
+To check.
+    a number called waited is the clock's elapsed in milliseconds.
+    If waited is greater than or equal to 50 then, Print "waited at least 50 milliseconds".
+    Otherwise, Print "waited only {waited} milliseconds".
+    a number called 'whole seconds' is the clock's elapsed in seconds.
+    If 'whole seconds' is less than 1000 then, Print "and under a thousand seconds".
+
+Start the clock.
+Wait 50 milliseconds.
+check.
+check.

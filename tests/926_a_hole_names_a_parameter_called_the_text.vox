@@ -1,0 +1,13 @@
+(A hole reads a variable whose name begins with "the", and the loop counter where the loop has one)
+To 'show' with a text called 'the text'.
+    Print "hole: {the text}, padded: [{the text:8}], quoted: {'the text'}".
+
+'show' of "hello".
+
+To 'count to two'.
+    For each number from 1 to 2, print "counted {the number}".
+
+'count to two'.
+For each number in [10, 20], print the number.
+print each number from [30, 40], but if the number is 30 print "thirty".
+print each number from [50, 60], print "{the number}".

@@ -1,0 +1,31 @@
+(A timer parameter reads the timer the caller passed, as a top-level timer reads its own)
+To 'report on' with a timer called watch.
+    a number called waited is the watch's elapsed in milliseconds.
+    If waited is greater than or equal to 30 then, Print "elapsed: at least 30 milliseconds".
+    Otherwise, Print "elapsed: only {waited} milliseconds".
+    If the watch's elapsed in seconds is less than 1000 then, Print "elapsed: under a thousand seconds".
+    Print "running: {the watch's running}".
+
+To 'report the finished' with a timer called watch.
+    a number called taken is the watch's duration in milliseconds.
+    If taken is greater than or equal to 30 then, Print "duration: at least 30 milliseconds".
+    If the watch's end time is greater than or equal to the watch's start time then, Print "end time after start time".
+    Print "running: {the watch's running}".
+
+To 'pass it on' with a timer called relay.
+    'report on' of relay.
+
+To 'time a lap'.
+    a timer called lap.
+    Start the lap.
+    Wait 30 milliseconds.
+    'report on' of lap.
+
+a timer called clock.
+Start the clock.
+Wait 30 milliseconds.
+'report on' of clock.
+'pass it on' of clock.
+Stop the clock.
+'report the finished' of clock.
+'time a lap'.

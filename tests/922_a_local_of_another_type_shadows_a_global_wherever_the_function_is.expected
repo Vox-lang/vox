@@ -1,0 +1,6 @@
+above: a text above, ["a", "list"], 7, a buffer above, {"a": 1}, 2.5
+below: a text below, ["b"], 8, a buffer below, {"b": 2}, 3.5
+sized: sized, running 1
+the global first: 1
+then the local: five
+the globals keep their own: 2, label, basket, [1, 2], 0.5, 1

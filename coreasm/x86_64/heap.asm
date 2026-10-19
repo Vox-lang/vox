@@ -49,6 +49,10 @@ section .text
     jmp %%alloc_done
     
 %%alloc_failed:
+    ; No memory left to give: the program stops. Any other refusal is the
+    ; size's own (an `Allocate` of nothing), and gives 0.
+    cmp rax, -12            ; -ENOMEM
+    je _out_of_memory
     xor rax, rax
     
 %%alloc_done:
@@ -67,7 +71,8 @@ section .text
 ; HEAP_ALLOC makes, but NOT entered in alloc_table. That table belongs to
 ; `Allocate`d raw blocks and `HEAP_FREE`; a collection block is freed by its
 ; own routine (`_free_list`, from the block's header), so an entry for it
-; would outlive the block it names. Returns the block in rax, or 0.
+; would outlive the block it names. Returns the block in rax; a block the
+; system cannot give stops the program (`_out_of_memory`, core.asm).
 %macro COLLECTION_ALLOC 1
     push rbx
     push rcx
@@ -92,10 +97,7 @@ section .text
     syscall
 
     cmp rax, -4096          ; raw mmap returns -errno in [-4095,-1]
-    jbe %%collection_alloc_done
-    xor rax, rax
-
-%%collection_alloc_done:
+    ja _out_of_memory
     pop r11
     pop r10
     pop r9

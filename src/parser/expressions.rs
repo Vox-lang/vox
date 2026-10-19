@@ -547,6 +547,9 @@ impl Parser {
         // preserving the "Unknown variable" diagnostic for `Append "{" to out`.
         if s.contains('{') || s.contains('}') {
             let parts = self.parse_format_string(&s);
+            if parts.iter().any(|p| matches!(p, FormatPart::Variable { name, .. } if name.is_empty())) {
+                self.note_unmatched_brace(&s);
+            }
             if parts
                 .iter()
                 .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
@@ -563,6 +566,29 @@ impl Parser {
             return Expr::StringLit(if collapsed.is_empty() { s } else { collapsed });
         }
         Expr::StringLit(s)
+    }
+
+    /// Remember where the literal `s` holding an unmatched `{` was written:
+    /// the most recent string token with that text, and the first `{` on its
+    /// line from there. Only the first one is kept.
+    fn note_unmatched_brace(&self, s: &str) {
+        if self.unmatched_brace.borrow().is_some() {
+            return;
+        }
+        let Some(source) = self.source_file.as_ref() else { return };
+        let end = (self.pos + 1).min(self.tokens.len());
+        let Some(token) = self.tokens[..end]
+            .iter()
+            .rev()
+            .find(|info| matches!(&info.token, Token::StringLiteral(text) if text == s))
+        else {
+            return;
+        };
+        let mut location = source.make_location(token.line, token.column);
+        if let Some(offset) = location.line_content.get(token.column.saturating_sub(1)..).and_then(|rest| rest.find('{')) {
+            location.column = token.column + offset;
+        }
+        *self.unmatched_brace.borrow_mut() = Some(location);
     }
 
     pub(crate) fn parse_format_string(&self, s: &str) -> Vec<FormatPart> {
@@ -634,7 +660,17 @@ impl Parser {
                 
                 // Determine if content is an expression or a simple variable name
                 // The format spec (if any) is attached verbatim without any parsing
-                if let Some(expr) = self.try_parse_expression(&content) {
+                // `{the text}` names a variable called 'the text' where one is
+                // in scope, and the loop counter (`the number` / `the text`
+                // with nothing after it) only where none is; which it is
+                // depends on scope, so the hole is kept as written and
+                // settled by the analyzer's name pass (zero_arg_calls.rs).
+                let parsed = self.try_parse_expression(&content);
+                let counter_phrase = matches!(&parsed, Some(Expr::Identifier(name)) if name == "_iter")
+                    && content.contains(' ');
+                if counter_phrase {
+                    parts.push(FormatPart::Variable { name: content, format });
+                } else if let Some(expr) = parsed {
                     parts.push(FormatPart::Expression { 
                         expr: Box::new(expr), 
                         format 
@@ -664,6 +700,18 @@ impl Parser {
         }
         
         parts
+    }
+
+    /// Whether a hole's text is the loop-counter phrase: `the` and a type word
+    /// (`the number`, `the text`, `the boolean`), which reads the counter of
+    /// a `For each` loop unless a variable has that exact name.
+    pub fn names_the_loop_counter(content: &str) -> bool {
+        if !content.contains(' ') {
+            return false;
+        }
+        let mut parser = Parser::new(Lexer::new(content).tokenize());
+        matches!(parser.parse_and_expr(), Ok(Expr::Identifier(name)) if name == "_iter")
+            && *parser.current() == Token::EOF
     }
 
     pub(crate) fn try_parse_expression(&self, content: &str) -> Option<Expr> {

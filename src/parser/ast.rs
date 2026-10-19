@@ -957,6 +957,31 @@ fn collect_definite_decls_inner(stmts: &[Statement]) -> DefiniteDecls {
     decls
 }
 
+/// Every timer the main line declares, in a branch or not; function bodies
+/// are their own scope. The analyzer and codegen keep the definite ones
+/// (`collect_definite_decls`): those are the timers a function may read.
+pub fn collect_main_line_timers(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    let mut timers = std::collections::HashSet::new();
+    for stmt in stmts {
+        match stmt {
+            Statement::TimerDecl { name } => {
+                timers.insert(name.clone());
+            }
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                timers.extend(collect_main_line_timers(then_block));
+                for (_, block) in else_if_blocks {
+                    timers.extend(collect_main_line_timers(block));
+                }
+                if let Some(block) = else_block {
+                    timers.extend(collect_main_line_timers(block));
+                }
+            }
+            _ => {}
+        }
+    }
+    timers
+}
+
 /// Every typed declaration reachable in this statement sequence, at ANY
 /// nesting depth, regardless of whether the path that reaches it is
 /// guaranteed to run - the complement of `collect_definite_decls`.

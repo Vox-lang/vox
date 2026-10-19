@@ -1,0 +1,8 @@
+(Compile-fail: `the text` with no name after it reads the counter of a
+ `For each` loop. With no variable of that name and no loop before it there
+ is nothing to read, and the hole used to print whatever was last computed.)
+
+To 'show it'.
+  Print "hole: {the text}".
+
+'show it'.

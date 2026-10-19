@@ -1,0 +1,15 @@
+above: at least 40 milliseconds
+above: under a thousand seconds
+above: running 1
+above: at least 40 milliseconds
+above: under a thousand seconds
+above: running 1
+running after the stop: 0
+top: duration at least 50 milliseconds
+top: start time set
+top: end time set
+lap running: 1
+own lap: at least 20 milliseconds
+lap running: 1
+split running: 1
+split running: 1

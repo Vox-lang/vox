@@ -203,6 +203,14 @@ impl Analyzer {
                 DefiniteDeclKind::Plain => {}
             }
         }
+        // A definite main-line timer is a timer inside every function, above
+        // its declaration or below it, as every other kind of global is.
+        let definite_timers = collect_main_line_timers(&program.statements);
+        for name in definite_timers {
+            if self.global_variables.contains(&name) {
+                self.timer_variables.insert(name);
+            }
+        }
         // docs/BUGS_FOUND.md #123: a name two declarations disagree on the
         // kind of is poisoned out of the map above, so a function reading it
         // must not be told it is unknown - the real diagnostic is the
@@ -713,7 +721,13 @@ impl Analyzer {
                 // reusing an incompatible name; a same-type redeclaration
                 // (or a genuinely new name) is unaffected - `bind_variable_
                 // type` no-ops on either.
-                let redeclaration_conflict = if let (true, Some(vt)) = (was_already_declared, var_type.as_ref()) {
+                let shadows_a_global = var_type.is_some() && self.shadows_a_global(name);
+                if shadows_a_global {
+                    self.record_shadowing_declaration(name);
+                }
+                let redeclaration_conflict = if let (true, false, Some(vt)) =
+                    (was_already_declared, shadows_a_global, var_type.as_ref())
+                {
                     self.bind_variable_type(
                         name,
                         vt.clone(),
@@ -726,6 +740,9 @@ impl Analyzer {
                     false
                 };
                 self.declare_variable_in_current_scope(name);
+                if var_type.is_some() && self.in_function_scope {
+                    self.function_locals.insert(name.clone());
+                }
                 if redeclaration_conflict {
                     if let Some(v) = value {
                         self.analyze_expr(v);
@@ -871,14 +888,17 @@ impl Analyzer {
                             // A call declared to return a text is positively
                             // text too, written directly or with arguments
                             // (#131).
+                            // So is every argument and environment read: each
+                            // hands back a text (docs/BUGS_FOUND.md #171).
                             let is_text = value
                                 .as_ref()
                                 .map(|v| {
-                                    matches!(
-                                        self.call_result_scalar_type(v)
-                                            .or_else(|| self.arithmetic_operand_type(v)),
-                                        Some(Type::String)
-                                    )
+                                    reads_an_argument_or_environment_text(v)
+                                        || matches!(
+                                            self.call_result_scalar_type(v)
+                                                .or_else(|| self.arithmetic_operand_type(v)),
+                                            Some(Type::String)
+                                        )
                                 })
                                 .unwrap_or(false);
                             if is_text {
@@ -1193,6 +1213,7 @@ impl Analyzer {
 
             Statement::ForRange { variable, range, body } => {
                 self.variables.insert(variable.clone());
+                self.loop_counter_bound = true;
                 // A range loop variable steps over integers - reusing a
                 // name already declared with a different type is a rebind,
                 // same rule as `Set`/`is` (plan 294 finding 2: this used to
@@ -1532,6 +1553,12 @@ impl Analyzer {
                 let saved_guards = self.active_guards.clone();
                 let saved_block_depth = self.block_depth;
                 let saved_in_function_scope = self.in_function_scope;
+                let saved_function_locals = std::mem::replace(
+                    &mut self.function_locals,
+                    params.iter().map(|(param_name, _)| param_name.clone()).collect(),
+                );
+                let saved_shadowed_declarations = std::mem::take(&mut self.shadowed_declarations);
+                let saved_loop_counter_bound = std::mem::replace(&mut self.loop_counter_bound, false);
                 // Type labels are scoped like the variables themselves: a
                 // parameter (or body-local declaration) named like a
                 // top-level variable must not relabel it for the code after
@@ -1545,6 +1572,7 @@ impl Analyzer {
                 let saved_borrowed_files = self.borrowed_files.clone();
                 let saved_files_opened_by_path = self.files_opened_by_path_in_a_branch.clone();
                 let saved_timer_variables = self.timer_variables.clone();
+                let saved_timer_parameters = std::mem::take(&mut self.timer_parameters);
                 let saved_allocated_variables = self.allocated_variables.clone();
                 let saved_value_typed_names = self.value_typed_names.clone();
                 let saved_thing_vars = self.thing_vars.clone();
@@ -1592,6 +1620,10 @@ impl Analyzer {
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::Map(_) => { self.map_variables.insert(param_name.clone()); }
                         Type::File => { self.file_variables.insert(param_name.clone()); }
+                        Type::Timer => {
+                            self.timer_variables.insert(param_name.clone());
+                            self.timer_parameters.insert(param_name.clone());
+                        }
                         Type::Integer | Type::Float | Type::String | Type::Boolean | Type::Time => {
                             self.scalar_types.insert(param_name.clone(), param_type.clone());
                         }
@@ -1612,6 +1644,9 @@ impl Analyzer {
                 self.block_depth = saved_block_depth;
                 self.active_guards = saved_guards;
                 self.in_function_scope = saved_in_function_scope;
+                self.function_locals = saved_function_locals;
+                self.restore_shadowed_declarations(saved_shadowed_declarations);
+                self.loop_counter_bound = saved_loop_counter_bound;
                 self.scalar_types = saved_scalar_types;
                 self.buffer_variables = saved_buffer_variables;
                 self.list_variables = saved_list_variables;
@@ -1620,6 +1655,7 @@ impl Analyzer {
                 self.borrowed_files = saved_borrowed_files;
                 self.files_opened_by_path_in_a_branch = saved_files_opened_by_path;
                 self.timer_variables = saved_timer_variables;
+                self.timer_parameters = saved_timer_parameters;
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
                 self.thing_vars = saved_thing_vars;
@@ -1721,7 +1757,12 @@ impl Analyzer {
                 // buffer with no diagnostic at all. Reject the conflict here
                 // exactly as `Statement::VarDecl` does, naming both kinds
                 // and anchoring on this, the second, declaration.
+                let shadows_a_global = self.shadows_a_global(name);
+                if shadows_a_global {
+                    self.record_shadowing_declaration(name);
+                }
                 let redeclaration_conflict = self.is_variable_declared_anywhere(name)
+                    && !shadows_a_global
                     && self.bind_variable_type(
                         name,
                         Type::Buffer,
@@ -1731,6 +1772,9 @@ impl Analyzer {
                         false,
                     );
                 self.variables.insert(name.clone());
+                if self.in_function_scope {
+                    self.function_locals.insert(name.clone());
+                }
                 if redeclaration_conflict {
                     self.analyze_expr(size);
                     return;
@@ -1866,7 +1910,7 @@ impl Analyzer {
                                 );
                                 self.push_error_with_hint_at(message, location, None);
                             }
-                            _ => {}
+                            _ => self.reject_untyped_call_result(value, UntypedPosition::BufferAppend),
                         },
                         _ => {
                             let location = self.find_append_site_location(list);
@@ -2191,13 +2235,21 @@ impl Analyzer {
             // Time and Timer statements
             Statement::TimerDecl { name } => {
                 self.variables.insert(name.clone());
+                if self.in_function_scope {
+                    if self.shadows_a_global(name) {
+                        self.record_shadowing_declaration(name);
+                    }
+                    self.function_locals.insert(name.clone());
+                    self.forget_other_kinds(name, &Type::Timer);
+                    self.timer_parameters.remove(name);
+                }
                 self.timer_variables.insert(name.clone());
             }
 
             Statement::TimerStart { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
-                } else if !self.timer_variables.contains(name) {
+                } else if !self.timer_variables.contains(name) || self.timer_parameters.contains(name) {
                     self.push_error(
                         format!("Start requires a timer: {}", name),
                         Some(name),
@@ -2208,7 +2260,7 @@ impl Analyzer {
             Statement::TimerStop { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
-                } else if !self.timer_variables.contains(name) {
+                } else if !self.timer_variables.contains(name) || self.timer_parameters.contains(name) {
                     self.push_error(
                         format!("Stop requires a timer: {}", name),
                         Some(name),
@@ -2256,4 +2308,22 @@ impl Analyzer {
         }
     }
 
+}
+
+/// An argument or environment read: `arguments's name`, `first`, `second`,
+/// `last`, `the argument at N`, and `environment's "NAME"`, `first`, `last`,
+/// `the environment variable at N`. Each is a text.
+fn reads_an_argument_or_environment_text(value: &Expr) -> bool {
+    matches!(
+        value,
+        Expr::ArgumentName
+            | Expr::ArgumentFirst
+            | Expr::ArgumentSecond
+            | Expr::ArgumentLast
+            | Expr::ArgumentAt { .. }
+            | Expr::EnvironmentVariable { .. }
+            | Expr::EnvironmentVariableAt { .. }
+            | Expr::EnvironmentVariableFirst
+            | Expr::EnvironmentVariableLast
+    )
 }

@@ -4352,7 +4352,7 @@ If buffer's size is equal to buffer's capacity then,
 
 | Guarantee | How It's Enforced |
 |-----------|-------------------|
-| No buffer overflows | Buffers grow dynamically as needed |
+| No buffer overflows | Buffers grow dynamically as needed; when the system has no more memory to give, the program stops with `Error: out of memory` on standard error and exit code 1 |
 | No use-after-free | Resources tracked and cleaned at exit |
 | No resource leaks | Automatic cleanup of all FDs and buffers |
 | No manual memory management | Compiler handles allocation/deallocation |

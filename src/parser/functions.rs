@@ -129,6 +129,7 @@ impl Parser {
         // Library 'name' version "1.0".
         // Plan 270 §6: the library *name* is an identifier (bare or quoted);
         // the *version* is a string literal (data, not a name).
+        let line_location = self.current_location();
         self.advance(); // consume 'library'
         self.skip_noise();
 
@@ -159,6 +160,34 @@ impl Parser {
         } else {
             "1.0".to_string() // Default version
         };
+
+        // A second `Library` line from ANOTHER file - one this file sees, or
+        // the one that sees this file - would rename the library. Two blocks
+        // written in one source are the separate libraries the driver builds
+        // into one `.so`, and keep their own identities.
+        let from_another_file = match (&self.library_line, &line_location) {
+            (Some((_, _, Some(first))), Some(here)) => first.file != here.file,
+            _ => false,
+        };
+        if let (true, Some((first_name, first_version, first_location))) = (from_another_file, &self.library_line) {
+            let first_place = match first_location {
+                Some(loc) => format!(" at {}:{}", loc.file, loc.line),
+                None => String::new(),
+            };
+            let mut error = CompileError::new(&format!(
+                "A library has one `Library` line, and this is a second one\n  \
+                 This file is already Library '{}' version \"{}\"{}, and this line would make it \
+                 Library '{}' version \"{}\": every function's exported name comes from it.\n  \
+                 A library whose source is included with `see` keeps its own `Library` line \
+                 in its own build; to use one from another, `see` its `.lib`.",
+                first_name, first_version, first_place, name, version
+            ));
+            if let Some(loc) = line_location {
+                error = error.with_location(loc);
+            }
+            return Err(Box::new(error));
+        }
+        self.library_line = Some((name.clone(), version.clone(), line_location));
 
         Ok(Statement::LibraryDecl { name, version })
     }
@@ -405,8 +434,14 @@ impl Parser {
         inner.function_first_parameters = std::mem::take(&mut self.function_first_parameters);
         inner.member_functions = std::mem::take(&mut self.member_functions);
         inner.included_files = std::mem::take(&mut self.included_files);
+        inner.library_line = self.library_line.take();
 
-        let statements = inner.parse_statement_list();
+        let mut statements = inner.parse_statement_list();
+        if let (Ok(_), Some(location)) = (&statements, inner.unmatched_brace.borrow_mut().take()) {
+            statements = Err(Box::new(
+                CompileError::new(crate::errors::UNMATCHED_BRACE_MESSAGE).with_location(location),
+            ));
+        }
 
         self.claimed_names = std::mem::take(&mut inner.claimed_names);
         self.things = std::mem::take(&mut inner.things);
@@ -415,6 +450,7 @@ impl Parser {
         self.function_first_parameters = std::mem::take(&mut inner.function_first_parameters);
         self.member_functions = std::mem::take(&mut inner.member_functions);
         self.included_files = std::mem::take(&mut inner.included_files);
+        self.library_line = inner.library_line.take();
         self.included_paths.append(&mut inner.included_paths);
         self.warnings.append(&mut inner.warnings);
 

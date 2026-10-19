@@ -1,0 +1,31 @@
+(A text read from the arguments or the environment is appended to a buffer like any other text)
+a buffer called holder is 256 bytes in size.
+a text called 'the binary name' is arguments's name.
+append 'the binary name' to holder.
+If holder's length is greater than 0 then, Print "the name was appended".
+clear holder.
+
+a text called opening is arguments's first.
+a text called following is arguments's second.
+a text called closing is arguments's last.
+a text called positioned is the argument at 1.
+append opening to holder.
+append following to holder.
+append closing to holder.
+append positioned to holder.
+Print holder.
+
+a text called home is environment's "HOME".
+a text called 'first setting' is environment's first.
+clear holder.
+append home to holder.
+append 'first setting' to holder.
+If holder's length is greater than 0 then, Print "the environment was appended".
+
+To 'append the name' with a buffer called gathered.
+    a text called 'own name' is arguments's name.
+    append 'own name' to gathered.
+
+clear holder.
+'append the name' of holder.
+If holder's length is greater than 0 then, Print "appended inside a function".

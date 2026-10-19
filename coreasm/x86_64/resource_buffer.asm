@@ -73,7 +73,8 @@ section .bss
 
 section .text
 ; Allocate a new dynamic buffer
-; Returns: pointer to buffer struct in rax (or 0 on failure)
+; Returns: pointer to buffer struct in rax (memory the system cannot give
+; stops the program: `_out_of_memory`, core.asm)
 global _alloc_buffer
 _alloc_buffer:
     push rbx
@@ -100,7 +101,7 @@ _alloc_buffer:
     
     ; Check for error (raw mmap returns -errno in [-4095,-1])
     cmp rax, -4096
-    ja .failed
+    ja _out_of_memory
     add rax, BUF_PREFIX     ; the buffer pointer is past the record word
     
     ; Initialize buffer header (dynamic buffer)
@@ -114,12 +115,6 @@ _alloc_buffer:
     call _register_buffer
     pop rax
     
-    jmp .done
-    
-.failed:
-    xor rax, rax
-    
-.done:
     pop r11
     pop r10
     pop r9
@@ -133,9 +128,20 @@ _alloc_buffer:
 
 ; Allocate a fixed-size buffer (no auto-grow, bounds checked)
 ; Args: size in rdi
-; Returns: pointer to buffer struct in rax (or 0 on failure)
+; Returns: pointer to buffer struct in rax (memory the system cannot give
+; stops the program: `_out_of_memory`, core.asm)
 global _alloc_buffer_sized
 _alloc_buffer_sized:
+    call _try_alloc_buffer_sized
+    test rax, rax
+    jz _out_of_memory
+    ret
+
+; The same, for the one caller with a contract of its own when the memory
+; cannot be had: `Resize` sets the error flag and leaves the buffer as it was
+; (`_realloc_buffer`). Returns: the buffer in rax, or 0.
+global _try_alloc_buffer_sized
+_try_alloc_buffer_sized:
     push rbx
     push rcx
     push rdx
@@ -329,8 +335,9 @@ _unload_library:
 
 ; Reallocate a buffer to an EXACT new capacity (no doubling).
 ; Args: rdi = buffer pointer, rsi = exact new capacity (must be >= BUF_LENGTH)
-; Returns: new buffer pointer in rax (the OLD pointer on mmap failure, with
-;          _last_error set to 1). The buffer may move.
+; Returns: new buffer pointer in rax. The buffer may move. Memory the system
+;          cannot give stops the program (`_out_of_memory`, core.asm): a
+;          growth that did not happen must never be written through.
 ; Copies the existing BUF_LENGTH bytes, writes the new pointer into the
 ; buffer's record entry (through BUF_RECORD), and frees the old allocation.
 ; The flags field is not copied: the new region is freshly mmapped (zeroed),
@@ -413,7 +420,7 @@ _reallocate_buffer:
 
     ; Check for error (raw mmap returns -errno in [-4095,-1])
     cmp rax, -4096
-    ja .failed
+    ja _out_of_memory
 
     lea rbx, [rax + BUF_PREFIX]  ; new buffer
 
@@ -446,11 +453,6 @@ _reallocate_buffer:
     syscall
 
     mov rax, rbx            ; return new buffer
-    jmp .done
-
-.failed:
-    mov qword [rel _last_error], 1
-    mov rax, r12            ; return old buffer on failure
 
 .done:
     pop r14
@@ -505,7 +507,7 @@ _grow_buffer:
     mov rsi, rax            ; new capacity
     mov rdi, r12            ; old buffer
     call _reallocate_buffer
-    ; rax = new buffer (or old on failure, _last_error already set)
+    ; rax = new buffer
 
     pop r13
     pop r12
@@ -1476,8 +1478,7 @@ _buffer_copy:
 ; #103): what a thing's buffer field becomes in a copy of the thing, so the
 ; copy and the original never share one. A fixed buffer's copy is fixed at
 ; the same capacity; any other is a growing buffer.
-; Args: rdi = buffer. Returns: rax = the new buffer, or the shared released
-; header with the error flag set when no memory could be had for it.
+; Args: rdi = buffer. Returns: rax = the new buffer.
 global _buffer_duplicate
 _buffer_duplicate:
     push rdi
@@ -1491,25 +1492,15 @@ _buffer_duplicate:
     test qword [r12 + BUF_FLAGS], BUF_FLAG_RELEASED
     jz .duplicate_live
     call _alloc_buffer
-    test rax, rax
-    jnz .duplicate_done
-    mov qword [rel _last_error], 1
-    lea rax, [rel _released_buffer_header]
     jmp .duplicate_done
 .duplicate_live:
     test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
     jz .duplicate_growing
     mov rdi, [r12 + BUF_CAPACITY]
     call _alloc_buffer_sized
-    jmp .duplicate_allocated
+    jmp .duplicate_fill
 .duplicate_growing:
     call _alloc_buffer
-.duplicate_allocated:
-    test rax, rax
-    jnz .duplicate_fill
-    mov qword [rel _last_error], 1
-    lea rax, [rel _released_buffer_header]
-    jmp .duplicate_done
 .duplicate_fill:
     mov rdi, rax
     mov rsi, r12
@@ -1598,13 +1589,13 @@ _realloc_buffer:
 .realloc_fallback:
     ; Not growing (shrink/equal) or mremap failed: original alloc + copy path.
     mov rdi, r13
-    call _alloc_buffer_sized
+    call _try_alloc_buffer_sized
     mov rbx, rax            ; new buffer pointer
 
-    ; _alloc_buffer_sized returns 0 on mmap failure. A null new buffer
-    ; would make the rep movsb below write through BUF_DATA (address 24)
-    ; and SIGSEGV. Bail out leaving the original buffer intact and
-    ; report a generic error, rather than copying into a null block.
+    ; _try_alloc_buffer_sized returns 0 when the memory cannot be had. A
+    ; null new buffer would make the rep movsb below write through BUF_DATA
+    ; (address 24) and SIGSEGV. Bail out leaving the original buffer intact
+    ; and report a generic error, rather than copying into a null block.
     test rbx, rbx
     jz .realloc_failed
 

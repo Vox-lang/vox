@@ -49,6 +49,22 @@ pub struct Analyzer {
     declared_locations: HashMap<String, SourceLocation>,
     active_guards: Vec<String>,
     in_function_scope: bool,
+    /// The names the function being analyzed has made its own: its
+    /// parameters, and every name its body has declared so far. A typed
+    /// declaration of any other name inside a function is a new local that
+    /// shadows the top-level variable of that name (LANGUAGE.md, Function
+    /// Scope), wherever the function is written; only a second declaration
+    /// of one of these is a redeclaration.
+    function_locals: HashSet<String>,
+    /// Whether a `For each` loop has bound the loop counter (`the number`,
+    /// `the text`) in this scope yet. Before one has, the phrase reads
+    /// nothing at all, so it is refused rather than printed.
+    loop_counter_bound: bool,
+    /// Where each local that shadows a global in the function being
+    /// analyzed was declared, so its diagnostics point at the local and not
+    /// at the global: name -> the global's own `declared_locations` entry,
+    /// put back when the body ends.
+    shadowed_declarations: HashMap<String, Option<SourceLocation>>,
     block_depth: usize,
     global_variables: HashSet<String>,
     /// Names two top-level declarations disagree on the kind of (docs/
@@ -68,6 +84,10 @@ pub struct Analyzer {
     map_variables: HashSet<String>,
     file_variables: HashSet<String>,
     timer_variables: HashSet<String>,
+    /// The timer parameters of the function being analyzed. Their properties
+    /// read the caller's timer; `Start` and `Stop` on one stay refused, as
+    /// they were before a parameter could be read at all.
+    timer_parameters: HashSet<String>,
     /// Variables holding a raw heap pointer from `Allocate`. They are not
     /// buffers (no length/capacity header), but `Free` must accept them -
     /// that is the whole point of Allocate.
@@ -321,6 +341,9 @@ impl Analyzer {
             declared_locations: HashMap::new(),
             active_guards: Vec::new(),
             in_function_scope: false,
+            function_locals: HashSet::new(),
+            loop_counter_bound: false,
+            shadowed_declarations: HashMap::new(),
             block_depth: 0,
             global_variables: HashSet::new(),
             conflicted_globals: HashSet::new(),
@@ -330,6 +353,7 @@ impl Analyzer {
             map_variables: HashSet::new(),
             file_variables: HashSet::new(),
             timer_variables: HashSet::new(),
+            timer_parameters: HashSet::new(),
             allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),

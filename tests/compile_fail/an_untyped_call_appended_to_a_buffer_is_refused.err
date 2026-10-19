@@ -1,0 +1,3 @@
+'untyped' has no declared return type, so its result is read as a number here
+an append to a buffer writes whatever type it is told the value has
+'no arguments' has no declared return type, so its result is read as a number here

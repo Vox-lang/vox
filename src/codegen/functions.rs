@@ -198,6 +198,10 @@ impl CodeGenerator {
                 Some(Type::List(_)) | Some(Type::Map(_)) | Some(Type::Buffer)
             )
         };
+        // A `timer` parameter's word is the address of the caller's timer.
+        let is_timer_param = |i: usize| -> bool {
+            matches!(param_types.get(i), Some(Type::Timer))
+        };
         // Number of argument words a given arg contributes.
         let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
 
@@ -236,6 +240,8 @@ impl CodeGenerator {
         for i in (0..args.len()).rev() {
             if is_thing_param(i) {
                 self.emit_thing_address(&args[i]); // rax = where the thing is
+            } else if let (true, Expr::Identifier(timer)) = (is_timer_param(i), &args[i]) {
+                self.emit_timer_address(timer); // rax = where the timer is
             } else if is_collection_param(i) {
                 // rax = the address of the word that owns the collection
                 let param_type = param_types[i].clone();
@@ -325,7 +331,7 @@ impl CodeGenerator {
                 let called = self.new_label("call_made");
                 self.emit_indent(&format!("cmp qword [rbp-{}], 0", skip));
                 self.emit_indent(&format!("jne {}", skipped));
-                self.emit_indent(&format!("call {}", label));
+                self.emit_indent(&format!("call {}", self.call_operand(&label)));
                 self.emit_indent(&format!("jmp {}", called));
                 self.emit(&format!("{}:", skipped));
                 self.emit_indent("SET_LAST_ERROR 1  ; a value held no collection of the parameter's kind");
@@ -333,7 +339,7 @@ impl CodeGenerator {
                 self.emit_skipped_call_result(return_type, destination);
                 self.emit(&format!("{}:", called));
             }
-            None => self.emit_indent(&format!("call {}", label)),
+            None => self.emit_indent(&format!("call {}", self.call_operand(&label))),
         }
 
         // Clean up stack words + pad (caller cleanup in SysV). The return tag
@@ -446,6 +452,19 @@ impl CodeGenerator {
     /// first, fall back to `zero_arg_func_return_type`); this mirrors that
     /// resolution order so a variable always wins over a same-named
     /// zero-arg function, here too.
+    /// The operand of a `call` to `label`. A shared library reaches another
+    /// library's function through its procedure linkage table: the function
+    /// lives in another `.so`, so a direct call has no fixed distance to it
+    /// and the link refuses one (docs/BUGS_FOUND.md #169). Everything else is
+    /// called directly.
+    pub(crate) fn call_operand(&self, label: &str) -> String {
+        if self.shared_lib_mode && self.imports.iter().any(|import| import.mangled == label) {
+            format!("{} wrt ..plt", label)
+        } else {
+            label.to_string()
+        }
+    }
+
     pub(crate) fn call_label_for_list_return(&self, val: &Expr) -> Option<String> {
         match val {
             Expr::FunctionCall { name, .. } => Some(self.resolved_call_label(name)),
@@ -541,7 +560,6 @@ impl CodeGenerator {
                         name,
                     );
                     self.record_function_signature(key, params, return_type);
-
                     if self.shared_lib_mode {
                         if let Some((lib, ver)) = current_lib.as_ref() {
                             let id = (lib.clone(), ver.clone());
