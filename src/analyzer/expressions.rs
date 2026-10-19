@@ -724,11 +724,7 @@ impl Analyzer {
                         // find_symbol_location("") matches the first
                         // `{` in the source.
                         self.push_error_with_hint(
-                            "Unmatched `{` in a string literal. A single \
-                             `{` begins a format interpolation, but no \
-                             variable or expression followed it. To write \
-                             a literal brace, double it: `{{` for `{` and \
-                             `}}` for `}`."
+                            crate::errors::UNMATCHED_BRACE_MESSAGE
                                 .to_string(),
                             Some(""),
                             None,
@@ -1183,6 +1179,10 @@ impl Analyzer {
                         self.push_whole_thing_not_a_value(name, name, &thing);
                         return;
                     }
+                }
+                if name == "_iter" && !self.loop_counter_bound {
+                    self.push_unbound_loop_counter();
+                    return;
                 }
                 if !self.is_variable_available(name) && name != "_iter" {
                     // Plan 270 G4: a bare/quoted identifier naming a

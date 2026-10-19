@@ -1,0 +1,4 @@
+(Compile-fail: the unmatched brace is in the file this one sees, on its third
+ line, and the error says so. It used to point at this file's first line.)
+see "../include/a_file_with_an_unmatched_brace.vox".
+greet.

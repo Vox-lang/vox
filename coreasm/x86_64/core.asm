@@ -38,6 +38,8 @@ section .data
     _reaped_status: dq -1
     _stack_overflow_msg: db "Error: stack overflow (recursion depth exceeded)", 10, 0
     _stack_overflow_msg_len: equ $ - _stack_overflow_msg - 1
+    _out_of_memory_msg: db "Error: out of memory", 10, 0
+    _out_of_memory_msg_len: equ $ - _out_of_memory_msg - 1
 
 section .text
 
@@ -56,6 +58,21 @@ _check_call_depth:
     mov rdi, 2              ; stderr
     lea rsi, [rel _stack_overflow_msg]
     mov rdx, _stack_overflow_msg_len
+    syscall
+    mov rax, 60             ; SYS_EXIT
+    mov rdi, 1              ; exit code 1 (not a segfault)
+    syscall
+
+; _out_of_memory - the one stop for an allocation the system refuses. Every
+; mmap and mremap in the runtime that cannot be served jumps here, so a
+; program whose memory has run out stops with a message and exit code 1, the
+; way it stops when its stack runs out, and never writes through a block it
+; was not given. Reached by `jmp`; never returns.
+_out_of_memory:
+    mov rax, 1              ; SYS_WRITE
+    mov rdi, 2              ; stderr
+    lea rsi, [rel _out_of_memory_msg]
+    mov rdx, _out_of_memory_msg_len
     syscall
     mov rax, 60             ; SYS_EXIT
     mov rdi, 1              ; exit code 1 (not a segfault)

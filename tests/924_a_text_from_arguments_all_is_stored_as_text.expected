@@ -1,0 +1,7 @@
+kept: ["alpha", "beta", "alpha", "alpha", "alpha", "beta"]
+held: ["alpha"]
+grown: ["alpha", "beta", 5], copies: ["alpha", "beta", 5]
+alpha
+beta
+8
+["alpha", "beta", 8]

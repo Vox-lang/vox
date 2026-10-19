@@ -1,0 +1,2 @@
+`the number` and `the text`, with no name after them, read the counter of a `For each` loop, and no loop before this line has one
+To read a variable, write its name: `{'the text'}` reads one called 'the text'.

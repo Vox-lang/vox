@@ -45,6 +45,16 @@ pub struct CodeGenerator {
     // offsets that hold a cell, for the function being generated; empty at
     // the top level.
     cell_slots: std::collections::HashSet<i64>,
+    // The slots of the function being generated that hold a timer
+    // parameter: the address of the caller's timer, which every property read
+    // goes through (`emit_timer_address`). Empty at the top level.
+    timer_pointer_slots: std::collections::HashSet<i64>,
+    // Lists known to have been declared empty (`[]`, or no initializer) in
+    // the scope being generated. Only for one of these may the first
+    // `append` decide the element type: any other list (named from a call, a
+    // parameter, another list) already holds elements of its own, so its
+    // elements are read by their slot tags (docs/BUGS_FOUND.md #167).
+    lists_declared_empty: std::collections::HashSet<String>,
     // The slot a typed declaration of a parameter's name uses inside the
     // function being generated, by name (never the parameter's cell).
     redeclared_parameter_slots: HashMap<String, i64>,
@@ -186,6 +196,10 @@ pub struct CodeGenerator {
     parsed_args_active: bool,
     global_var_labels: HashMap<String, String>,
     global_var_counter: usize,
+    // Main-line timers: each one's `.bss` label reserves the whole timer
+    // (TIMER_SIZE bytes) and IS its storage, as a thing global's is, so a
+    // function reads the same timer the top level started.
+    timer_globals: std::collections::HashSet<String>,
     // BSS label holding the runtime type tag byte for a top-level `value`
     // global, keyed by the variable's author-facing name. A top-level
     // `value` needs the SAME pairing discipline as a local one (payload and
@@ -562,6 +576,8 @@ impl CodeGenerator {
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
             cell_slots: std::collections::HashSet::new(),
+            timer_pointer_slots: std::collections::HashSet::new(),
+            lists_declared_empty: std::collections::HashSet::new(),
             redeclared_parameter_slots: HashMap::new(),
             file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
@@ -603,6 +619,7 @@ impl CodeGenerator {
             parsed_args_active: false,
             global_var_labels: HashMap::new(),
             global_var_counter: 0,
+            timer_globals: std::collections::HashSet::new(),
             global_value_tag_labels: HashMap::new(),
             declared_types: HashMap::new(),
             global_var_types: HashMap::new(),

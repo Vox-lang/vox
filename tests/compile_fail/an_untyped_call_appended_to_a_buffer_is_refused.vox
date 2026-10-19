@@ -1,0 +1,12 @@
+(Compile-fail: a call with no declared return type has nothing to be read as,
+ so appending its result to a buffer is refused, as appending it to a list
+ is. Plain, braced, and with no arguments, each used to write the address of
+ the returned text.)
+
+To 'untyped' of a text called word. Return "{word}?".
+To 'no arguments'. Return "plain".
+a buffer called other is 64 bytes in size.
+append 'untyped' of "x" to other.
+append {'untyped' of "y"} to other.
+append 'no arguments' to other.
+Print "top: {other}".

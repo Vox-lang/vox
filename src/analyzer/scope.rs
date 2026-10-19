@@ -285,6 +285,14 @@ impl Analyzer {
         guard_against_called: bool,
     ) -> Option<SourceLocation> {
         let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
+        // A second declaration of a local that shadows a global comes after
+        // the local's own (see `record_shadowing_declaration`); the global's
+        // lines above it are not this binding.
+        if let (Some(line), true) = (decl_line, self.shadowed_declarations.contains_key(symbol)) {
+            if let Some(site) = self.find_pattern_location_after(symbol, patterns, line) {
+                return Some(site);
+            }
+        }
         self.find_pattern_location(symbol, patterns, occurrence, decl_line, guard_against_called, false)
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
@@ -779,6 +787,67 @@ impl Analyzer {
     /// BEFORE that, so the location has to be found in the source text.
     fn declaration_line_of(&self, name: &str) -> Option<usize> {
         self.find_declaration_location(name).map(|loc| loc.line)
+    }
+
+    /// Whether a declaration of `name` here brings a new local into being
+    /// over a top-level variable of that name: inside a function, a name
+    /// the function has not yet made its own (see `function_locals`).
+    pub(crate) fn shadows_a_global(&self, name: &str) -> bool {
+        self.in_function_scope && !self.function_locals.contains(name)
+    }
+
+    /// `the number` or `the text` with no name after it reads the counter of a
+    /// `For each` loop, and none has run in this scope: there is nothing to
+    /// read, so the phrase is refused rather than printed (docs/BUGS_FOUND.md
+    /// #164). The caret goes on the first such phrase written.
+    pub(crate) fn push_unbound_loop_counter(&mut self) {
+        let location = ["the number", "the text", "the boolean"]
+            .iter()
+            .filter_map(|phrase| {
+                self.find_pattern_location(phrase, &[phrase.to_string()], 0, None, false, false)
+                    .or_else(|| self.find_pattern_location(phrase, &[format!("{{{}", phrase)], 0, None, false, false))
+            })
+            .min_by_key(|loc| (loc.line, loc.column));
+        let message = concat!(
+            "`the number` and `the text`, with no name after them, read the counter of a ",
+            "`For each` loop, and no loop before this line has one\n  ",
+            "To read a variable, write its name: `{'the text'}` reads one called 'the text'.",
+        )
+        .to_string();
+        self.push_error_with_hint_at(message, location, None);
+    }
+
+    /// The first match of `patterns` for `symbol` on a line after `after`.
+    fn find_pattern_location_after(&self, symbol: &str, patterns: &[String], after: usize) -> Option<SourceLocation> {
+        (0..)
+            .map_while(|occurrence| self.find_pattern_location(symbol, patterns, occurrence, None, false, false))
+            .find(|loc| loc.line > after)
+    }
+
+    /// A local declared over a global of its name: from here to the end of
+    /// the function, `name` was declared at the local's own `called name`,
+    /// the first one past the global's, not at the global's.
+    pub(crate) fn record_shadowing_declaration(&mut self, name: &str) {
+        if !self.global_variables.contains(name) || self.shadowed_declarations.contains_key(name) {
+            return;
+        }
+        let after = self.declared_locations.get(name).map_or(0, |loc| loc.line);
+        let site = self.find_pattern_location_after(name, &[format!("called {} ", name)], after);
+        if let Some(site) = site {
+            let global = self.declared_locations.insert(name.to_string(), site);
+            self.shadowed_declarations.insert(name.to_string(), global);
+        }
+    }
+
+    /// Put back every global location `record_shadowing_declaration` set
+    /// aside, when the function's body ends.
+    pub(crate) fn restore_shadowed_declarations(&mut self, saved: HashMap<String, Option<SourceLocation>>) {
+        for (name, global) in std::mem::replace(&mut self.shadowed_declarations, saved) {
+            match global {
+                Some(loc) => self.declared_locations.insert(name, loc),
+                None => self.declared_locations.remove(&name),
+            };
+        }
     }
 
     pub(crate) fn declare_variable_in_current_scope(&mut self, name: &str) {

@@ -1,0 +1,12 @@
+elapsed: at least 30 milliseconds
+elapsed: under a thousand seconds
+running: 1
+elapsed: at least 30 milliseconds
+elapsed: under a thousand seconds
+running: 1
+duration: at least 30 milliseconds
+end time after start time
+running: 0
+elapsed: at least 30 milliseconds
+elapsed: under a thousand seconds
+running: 1

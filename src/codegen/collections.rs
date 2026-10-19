@@ -172,6 +172,12 @@ impl CodeGenerator {
                                 }
                             }
                             env.insert(name.clone(), info);
+                            // `arguments's all` and `arguments's raw` are lists
+                            // of texts, so a list named from one holds texts
+                            // (docs/BUGS_FOUND.md #166).
+                            if matches!(other, Expr::ArgumentAll | Expr::ArgumentRaw) {
+                                list_seen_tags.insert(name.clone(), TAG_STRING);
+                            }
                         }
                         None => {
                             // No initializer: nothing foreign has been stored,

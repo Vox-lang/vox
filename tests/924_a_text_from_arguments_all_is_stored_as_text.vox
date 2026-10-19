@@ -1,0 +1,33 @@
+(A text read out of arguments's all or arguments's raw is a text wherever it is stored)
+a list called kept is [].
+a list called given is arguments's all.
+a list called untouched is arguments's raw.
+a text called word is element 1 of given.
+append word to kept.
+a text called 'raw word' is element 2 of untouched.
+append 'raw word' to kept.
+append element 1 of given to kept.
+a text called opening is given's first.
+append opening to kept.
+For each 'given word' in given, append 'given word' to kept.
+Print "kept: {kept}".
+
+To 'keep the words'.
+    a list called words is arguments's all.
+    a list called held is [].
+    a text called 'first word' is element 1 of words.
+    append 'first word' to held.
+    Print "held: {held}".
+
+'keep the words'.
+a list called grown is arguments's all.
+append 5 to grown.
+a list called copies is [].
+For each item in grown, append item to copies.
+Print "grown: {grown}, copies: {copies}".
+a list called 'more given' is arguments's all.
+append 8 to 'more given'.
+For each word in 'more given', Print "{word}".
+a list called 'more copies' is [].
+For each word in 'more given', append word to 'more copies'.
+Print "{more copies}".

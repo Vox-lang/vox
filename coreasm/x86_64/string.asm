@@ -128,7 +128,7 @@ _str_eq:
 ; Args: rdi = source pointer, rsi = max length in bytes (e.g. the
 ; buffer's own tracked length via _buffer_length)
 ; Returns: rax = pointer to a freshly allocated, NUL-terminated copy
-; (or 0 on allocation failure)
+; (memory the system cannot give stops the program: `_out_of_memory`)
 global _strdup_bounded
 _strdup_bounded:
     push rbx
@@ -164,7 +164,7 @@ _strdup_bounded:
     syscall
 
     cmp rax, -4096           ; raw mmap returns -errno in [-4095,-1]
-    ja .strdupb_fail
+    ja _out_of_memory
 
     mov rbx, rax             ; save dest pointer
 
@@ -186,12 +186,6 @@ _strdup_bounded:
     pop rbx
     ret
 
-.strdupb_fail:
-    xor rax, rax
-    pop r13
-    pop r12
-    pop rbx
-    ret
 
 ; Compare two byte sequences of known lengths for equality. Used for
 ; buffer-vs-buffer and buffer-vs-string comparison where one or both

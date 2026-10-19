@@ -1,0 +1,12 @@
+(Compile-fail: a local that shadows a global is still one variable inside its
+ function, so a second declaration of another type is refused, and the message
+ points at the second declaration and names the first, not the global.)
+
+a number called g is 1.
+
+To 'declare twice'.
+  a text called g is "five".
+  a number called g is 6.
+  Print "{g}".
+
+'declare twice'.

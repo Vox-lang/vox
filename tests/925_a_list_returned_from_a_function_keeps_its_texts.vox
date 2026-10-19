@@ -1,0 +1,101 @@
+(A list a function returns keeps the texts its body proves it holds)
+To 'the rows'.
+    a list called rows is [].
+    a buffer called digits is "12".
+    a text called row is digits as text.
+    append row to rows.
+    append "3.5" to rows.
+    Return a list, rows.
+
+To 'the rows of' with a text called extra.
+    a list called rows is ["40"].
+    append extra to rows.
+    Return a list, rows.
+
+To 'the tally'.
+    a list called tally is [1, 2].
+    Return a list, tally.
+
+a list called got is 'the rows'.
+For each row in got,
+    a float called 'parsed float' is row as a float,
+    Print 'parsed float'.
+a list called kept is [].
+For each row in got, append row to kept.
+Print "kept: {kept}".
+a list called 'the extra rows' is 'the rows of' of "2".
+For each row in 'the extra rows',
+    a number called parsed is row as a number,
+    Print parsed add 1.
+a list called counts is 'the tally'.
+For each count in counts, Print count add 1.
+a list called widened is 'the rows'.
+append 7 to widened.
+Print "widened: {widened}".
+To 'parse inside'.
+    a list called 'rows inside' is 'the rows'.
+    For each row in 'rows inside',
+        a number called parsed is row as a number,
+        Print "inside {parsed}".
+
+'parse inside'.
+
+To 'the single row'.
+    a list called rows is ["12"].
+    Return a list, rows.
+
+a list called widened is 'the single row'.
+append 7 to widened.
+For each row in widened, Print "{row}".
+
+(A list that does not start empty keeps its elements' own types when a number is appended)
+To 'the lone row'.
+    a list called 'row list' is ["12"].
+    Return a list, 'row list'.
+
+a list called 'plain rows' is 'the lone row'.
+For each row in 'plain rows', Print "plain {row}".
+a list called 'widened rows' is 'the lone row'.
+append 7 to 'widened rows'.
+For each row in 'widened rows', Print "widened {row}".
+For each row in 'widened rows', Print row.
+Print 'widened rows'.
+
+(A list parameter holds the caller's elements before its first append)
+To 'add a word to' with a list called items.
+    append "word" to items.
+    For each item in items, Print "item {item}".
+
+a list called counts is [1, 2].
+'add a word to' of counts.
+
+(Lists named from a parameter, written by element, or handed to another function read each element as what it is)
+To 'tagged copy of' with a list called items.
+    a list called out is items.
+    append "x" to out.
+    Return a list, out.
+
+a list called 'tagged copies' is 'tagged copy of' of [1, 2].
+For each entry in 'tagged copies', Print entry.
+
+To 'set rows'.
+    a list called out is [].
+    append "x" to out.
+    append "y" to out.
+    Set element 1 of out to 5.
+    Return a list, out.
+
+a list called 'set entries' is 'set rows'.
+For each entry in 'set entries', Print entry.
+
+To 'add a number' with a list called target.
+    append 7 to target.
+
+To 'handed rows'.
+    a list called out is [].
+    append "y" to out.
+    'add a number' of out.
+    Return a list, out.
+
+a list called 'handed entries' is 'handed rows'.
+For each entry in 'handed entries', Print entry.

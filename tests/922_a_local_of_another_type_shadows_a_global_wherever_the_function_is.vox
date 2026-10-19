@@ -1,0 +1,45 @@
+(Each function is written above the globals it shadows)
+To 'shadow above'.
+    a text called count is "a text above".
+    a list called label is ["a", "list"].
+    a number called basket is 7.
+    a buffer called total is "a buffer above".
+    a map called ratio is {"a": 1}.
+    a float called 'the flag' is 2.5.
+    Print "above: {count}, {label}, {basket}, {total}, {ratio}, {the flag}".
+
+a number called count is 1.
+a text called label is "label".
+a buffer called basket is "basket".
+a list called total is [1, 2].
+a float called ratio is 0.5.
+a boolean called 'the flag' is true.
+
+(And each of these is written below them)
+To 'shadow below'.
+    a text called count is "a text below".
+    a list called label is ["b"].
+    a number called basket is 8.
+    a buffer called total is "a buffer below".
+    a map called ratio is {"b": 2}.
+    a float called 'the flag' is 3.5.
+    Print "below: {count}, {label}, {basket}, {total}, {ratio}, {the flag}".
+
+To 'shadow with a sized buffer and a timer'.
+    a buffer called count is 16 bytes in size.
+    append "sized" to count.
+    a timer called label.
+    Start the label.
+    Print "sized: {count}, running {the label's running}".
+
+(A function may read the global before its own local of that name)
+To 'read the global, then shadow it'.
+    Print "the global first: {count}".
+    a text called count is "five".
+    Print "then the local: {count}".
+
+'shadow above'.
+'shadow below'.
+'shadow with a sized buffer and a timer'.
+'read the global, then shadow it'.
+Print "the globals keep their own: {count add 1}, {label}, {basket}, {total}, {ratio}, {the flag}".

@@ -1,0 +1,2 @@
+A library has one `Library` line, and this is a second one
+This file is already Library 'outer' version "0.1" at a_library_line_arriving_through_see_is_refused.vox:4, and this line would make it Library 'inner' version "0.1"

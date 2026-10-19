@@ -1,0 +1,28 @@
+12.0
+3.5
+kept: ["12", "3.5"]
+41
+3
+2
+3
+widened: ["12", "3.5", 7]
+inside 12
+inside 3
+12
+7
+plain 12
+widened 12
+widened 7
+12
+7
+["12", 7]
+item 1
+item 2
+item word
+1
+2
+x
+5
+y
+y
+7
