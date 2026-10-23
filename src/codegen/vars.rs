@@ -36,6 +36,13 @@ impl CodeGenerator {
         // storage - field offsets index into it (plan 310 §9). Every other
         // global holds one quadword: a scalar's value, or a pointer to a
         // buffer/list/map allocated elsewhere.
+        if self.timer_globals.contains(name) {
+            self.bss_section.push_str(&format!(
+                "    {}: resb 56  ; {} is a timer (TIMER_SIZE)\n",
+                label, name
+            ));
+            return;
+        }
         match self.thing_global_size(name) {
             Some(size) => {
                 self.bss_section.push_str(&format!(
@@ -176,6 +183,10 @@ impl CodeGenerator {
     /// sorted so label numbering stays deterministic across builds.
     pub(crate) fn collect_global_var_labels(&mut self, stmts: &[Statement]) {
         let definite = collect_definite_decls(stmts);
+        self.timer_globals = collect_main_line_timers(stmts)
+            .into_iter()
+            .filter(|name| definite.contains_key(name))
+            .collect();
         let mut names: Vec<&String> = definite.keys().collect();
         names.sort();
         for name in names {
@@ -1032,6 +1043,28 @@ impl CodeGenerator {
         self.apply_binding(binding);
         if self.variable_types.get(&binding.name) == Some(&VarType::List) {
             self.list_element_types.insert(binding.name.clone(), VarType::Mixed);
+        }
+    }
+
+    /// Point `rax` at the timer called `name`: a timer declared in this
+    /// frame keeps its struct just below its slot, and a main-line timer's
+    /// `.bss` label is the struct itself, so a function reads the very timer
+    /// the top level started (LANGUAGE.md, Function Scope).
+    pub(crate) fn emit_timer_address(&mut self, name: &str) {
+        if let Some(offset) = self.get_var(name) {
+            if self.timer_pointer_slots.contains(&offset) {
+                self.emit_indent(&format!("mov rax, [rbp-{}]  ; timer parameter {}: the caller's timer", offset, name));
+            } else {
+                self.emit_indent(&format!("lea rax, [rbp - {}]  ; timer {}", offset + 48, name));
+            }
+        } else if let Some(label) = self
+            .global_var_label(name)
+            .filter(|_| self.timer_globals.contains(name))
+            .cloned()
+        {
+            self.emit_indent(&format!("lea rax, [rel {}]  ; timer {}", label, name));
+        } else {
+            panic!("internal compiler error: no storage for the timer '{}'", name);
         }
     }
 

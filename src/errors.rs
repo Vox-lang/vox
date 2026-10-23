@@ -2,6 +2,13 @@ use std::fmt;
 
 use crate::lexer::{classify_lines, SourceRegion};
 
+/// A `{` in a string literal with no name or expression after it, and no
+/// closing `}`: the analyzer reports it in the file being compiled, and the
+/// parser in a file that file includes (docs/BUGS_FOUND.md #10, #173).
+pub const UNMATCHED_BRACE_MESSAGE: &str = "Unmatched `{` in a string literal. A single \
+    `{` begins a format interpolation, but no variable or expression followed it. To write \
+    a literal brace, double it: `{{` for `{` and `}}` for `}`.";
+
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub file: String,

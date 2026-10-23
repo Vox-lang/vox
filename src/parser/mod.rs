@@ -105,6 +105,14 @@ pub struct Parser {
     // `examples/` compile check in `test.sh`): a library with no
     // top-level entry is correct by construction, not a mistake.
     saw_library_decl: bool,
+    // The `Library` line this parse has read, with where it was written: a
+    // library has one identity, so a second line arriving from another file
+    // through `see` is refused, naming both.
+    library_line: Option<(String, String, Option<SourceLocation>)>,
+    // Where the first string literal holding an unmatched `{` was written, in
+    // this file. An included file reports it itself (see
+    // `inline_source_include`), since only its parser knows its name and lines.
+    unmatched_brace: std::cell::RefCell<Option<SourceLocation>>,
     // Non-fatal diagnostics collected during parsing (currently the #5
     // "function still open at end of file" warning). The driver prints
     // these after a successful parse; they never abort compilation.
@@ -239,6 +247,8 @@ impl Parser {
             suppress_conditional_suffix: false,
             shared_mode: false,
             saw_library_decl: false,
+            library_line: None,
+            unmatched_brace: std::cell::RefCell::new(None),
             warnings: Vec::new(),
             things: std::collections::HashMap::new(),
             thing_vars: std::collections::HashMap::new(),

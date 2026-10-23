@@ -508,9 +508,7 @@ _list_append:
     ; Raw sys_mmap returns -errno in [-4095, -1] on failure (not MAP_FAILED)
     cmp rax, -4096
     jbe .mmap_ok
-    mov rdi, 1                              ; allocation failure: exit(1)
-    mov rax, 60                             ; sys_exit
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .mmap_ok:
     mov rdi, rax                            ; rdi = new list
 
@@ -793,9 +791,7 @@ _copy_list:
     syscall
     cmp rax, -4096
     jbe .copy_list_mmap_ok
-    mov rdi, 1
-    mov rax, 60                                 ; sys_exit
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .copy_list_mmap_ok:
     mov r15, rax                                ; r15 = new list ptr
 
@@ -912,9 +908,7 @@ _list_to_argv:
     ; Raw sys_mmap returns -errno in [-4095,-1] on failure
     cmp rax, -4096
     jbe .argv_ok
-    mov rdi, 1
-    mov rax, 60                             ; sys_exit
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .argv_ok:
     ; rax = argv array base
     mov [rax], r12                          ; argv[0] = path

@@ -23,10 +23,28 @@ use super::Analyzer;
 use crate::parser::ast::*;
 use std::collections::HashSet;
 
+/// What a name means where a statement sits: the variables in scope, and
+/// the loop variable `the number` reads there. In a `For each number in ...`
+/// loop that is the loop's own element, so the phrase names it outright
+/// rather than reading whatever the last value computed left behind
+/// (docs/BUGS_FOUND.md #164).
+#[derive(Clone)]
+struct Scope {
+    variables: HashSet<String>,
+    counter: Option<String>,
+}
+
+impl Scope {
+    fn contains(&self, name: &str) -> bool {
+        self.variables.contains(name)
+    }
+}
+
 impl Analyzer {
     pub(crate) fn resolve_zero_argument_calls(&mut self, program: &mut Program) {
         let mut top_level_names = HashSet::new();
         collect_declared_names(&program.statements, &mut top_level_names);
+        let top_level = Scope { variables: top_level_names, counter: None };
 
         // Function keys depend on the library identity in force at the
         // definition, so the walk tracks it the way the first pass does and
@@ -37,24 +55,24 @@ impl Analyzer {
             if let Statement::LibraryDecl { name, version } = stmt {
                 self.current_library = Some((name.clone(), version.clone()));
             }
-            self.resolve_in_statement(stmt, &top_level_names);
+            self.resolve_in_statement(stmt, &top_level);
         }
         self.current_library = saved_library;
     }
 
-    fn resolve_in_block(&self, stmts: &mut [Statement], variables: &HashSet<String>) {
+    fn resolve_in_block(&self, stmts: &mut [Statement], variables: &Scope) {
         for stmt in stmts.iter_mut() {
             self.resolve_in_statement(stmt, variables);
         }
     }
 
-    fn resolve_in_statement(&self, stmt: &mut Statement, variables: &HashSet<String>) {
+    fn resolve_in_statement(&self, stmt: &mut Statement, variables: &Scope) {
         match stmt {
             Statement::FunctionDef { params, body, .. } => {
-                let mut in_scope = variables.clone();
-                in_scope.extend(params.iter().map(|(name, _)| name.clone()));
-                collect_declared_names(body, &mut in_scope);
-                self.resolve_in_block(body, &in_scope);
+                let mut names = variables.variables.clone();
+                names.extend(params.iter().map(|(name, _)| name.clone()));
+                collect_declared_names(body, &mut names);
+                self.resolve_in_block(body, &Scope { variables: names, counter: None });
             }
             Statement::Print { value, .. }
             | Statement::SetThingField { value, .. }
@@ -95,9 +113,15 @@ impl Analyzer {
                 self.resolve_in_expr(range, variables);
                 self.resolve_in_block(body, variables);
             }
-            Statement::ForEach { collection, body, .. } => {
+            Statement::ForEach { variable, collection, body } => {
                 self.resolve_in_expr(collection, variables);
-                self.resolve_in_block(body, variables);
+                if variable == "number" {
+                    let mut inner = variables.clone();
+                    inner.counter = Some(variable.clone());
+                    self.resolve_in_block(body, &inner);
+                } else {
+                    self.resolve_in_block(body, variables);
+                }
             }
             Statement::Repeat { count, body } => {
                 self.resolve_in_expr(count, variables);
@@ -188,12 +212,17 @@ impl Analyzer {
         }
     }
 
-    fn names_zero_argument_call(&self, name: &str, variables: &HashSet<String>) -> bool {
+    fn names_zero_argument_call(&self, name: &str, variables: &Scope) -> bool {
         !variables.contains(name) && self.is_zero_arg_function(name)
     }
 
-    fn resolve_in_expr(&self, expr: &mut Expr, variables: &HashSet<String>) {
+    fn resolve_in_expr(&self, expr: &mut Expr, variables: &Scope) {
         match expr {
+            Expr::Identifier(name) if name == "_iter" => {
+                if let Some(counter) = &variables.counter {
+                    *expr = Expr::Identifier(counter.clone());
+                }
+            }
             Expr::Identifier(name) => {
                 if self.names_zero_argument_call(name, variables) {
                     *expr = Expr::FunctionCall { name: name.clone(), args: Vec::new() };
@@ -203,7 +232,15 @@ impl Analyzer {
                 for part in parts.iter_mut() {
                     match part {
                         FormatPart::Variable { name, format } => {
-                            if self.names_zero_argument_call(name, variables) {
+                            if !variables.contains(name.as_str())
+                                && crate::parser::Parser::names_the_loop_counter(name)
+                            {
+                                let counter = variables.counter.clone().unwrap_or_else(|| "_iter".to_string());
+                                *part = FormatPart::Expression {
+                                    expr: Box::new(Expr::Identifier(counter)),
+                                    format: format.take(),
+                                };
+                            } else if self.names_zero_argument_call(name, variables) {
                                 *part = FormatPart::Expression {
                                     expr: Box::new(Expr::FunctionCall {
                                         name: name.clone(),

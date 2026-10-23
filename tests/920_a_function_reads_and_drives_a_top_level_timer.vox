@@ -1,0 +1,59 @@
+(A function reads a top-level timer as a timer, written above the declaration or below it)
+To 'report the race clock'.
+    a number called waited is the 'race clock''s elapsed in milliseconds.
+    If waited is greater than or equal to 40 then, Print "above: at least 40 milliseconds".
+    Otherwise, Print "above: only {waited} milliseconds".
+    If the 'race clock''s elapsed in seconds is less than 1000 then, Print "above: under a thousand seconds".
+    Print "above: running {the 'race clock''s running}".
+
+a timer called 'race clock'.
+
+To 'start the race clock'.
+    Start the 'race clock'.
+
+To 'stop the race clock'.
+    Stop the 'race clock'.
+
+(A timer declared inside a function is its own, and shadows nothing it should not)
+To 'time a lap of its own'.
+    a timer called lap.
+    Start the lap.
+    Wait 20 milliseconds.
+    Stop the lap.
+    a number called taken is the lap's duration in milliseconds.
+    If taken is greater than or equal to 20 then, Print "own lap: at least 20 milliseconds".
+    Otherwise, Print "own lap: only {taken} milliseconds".
+
+'start the race clock'.
+Wait 50 milliseconds.
+'report the race clock'.
+'report the race clock'.
+'stop the race clock'.
+Print "running after the stop: {the 'race clock''s running}".
+a number called total is the 'race clock''s duration in milliseconds.
+If total is greater than or equal to 50 then, Print "top: duration at least 50 milliseconds".
+If the 'race clock''s start time is greater than 0 then, Print "top: start time set".
+If the 'race clock''s end time is greater than or equal to the 'race clock''s start time then, Print "top: end time set".
+
+(A timer declared in every branch is a global too)
+a boolean called 'the race is long' is true.
+If 'the race is long' then,
+    a timer called lap.
+Otherwise,
+    a timer called lap.
+
+To 'read the lap'.
+    Print "lap running: {the lap's running}".
+
+Start the lap.
+'read the lap'.
+'time a lap of its own'.
+'read the lap'.
+
+(A timer declared in a loop body keeps to the loop)
+a number called round is 0.
+While round is less than 2,
+    a timer called split,
+    Start the split,
+    Print "split running: {the split's running}",
+    increment round.

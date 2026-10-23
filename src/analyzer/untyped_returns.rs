@@ -63,6 +63,7 @@ pub(crate) enum UntypedPosition {
     Print,
     Interpolation,
     ListAppend,
+    BufferAppend,
     ListElement,
     MapValue,
     DynamicValue,
@@ -79,6 +80,9 @@ impl UntypedPosition {
                 "a list slot is tagged with the type proven at the write"
             }
             UntypedPosition::MapValue => "a map value is tagged with the type proven at the write",
+            UntypedPosition::BufferAppend => {
+                "an append to a buffer writes whatever type it is told the value has"
+            }
             UntypedPosition::DynamicValue => {
                 "a `value` carries a runtime tag, which is set from the type proven at the write"
             }

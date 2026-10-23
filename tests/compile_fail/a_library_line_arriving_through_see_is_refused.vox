@@ -1,0 +1,9 @@
+(Compile-fail: a library has one identity. The file it sees declares a library
+ of its own, and its `Library` line used to rename this one silently.)
+
+Library 'outer' version "0.1".
+
+see "../include/a_library_called_inner.vox".
+
+To 'outer answer'.
+  Return a number, 'inner answer' add 1.

@@ -1,0 +1,2 @@
+Unmatched `{` in a string literal.
+include/a_file_with_an_unmatched_brace.vox:3:10

@@ -1122,16 +1122,12 @@ impl CodeGenerator {
                 self.uses_heap = true;
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
                 
-                // COLLECTION_ALLOC page-aligns the size and runs the -errno
-                // failure test like HEAP_ALLOC, but keeps the block out of
-                // `alloc_table`: a list is freed from its own header, so an
-                // entry there would outlive the block it names.
-                let mmap_ok = self.new_label("list_mmap_ok");
-                self.emit_indent(&format!("COLLECTION_ALLOC {}  ; size; returns ptr or 0", total_size));
-                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
-                self.emit_indent(&format!("jnz {}", mmap_ok));
-                self.emit_indent("EXIT 1");
-                self.emit(&format!("{}:", mmap_ok));
+                // COLLECTION_ALLOC page-aligns the size like HEAP_ALLOC, but
+                // keeps the block out of `alloc_table`: a list is freed from
+                // its own header, so an entry there would outlive the block
+                // it names. Memory the system cannot give stops the program
+                // inside the macro (`_out_of_memory`), so rax is the block.
+                self.emit_indent(&format!("COLLECTION_ALLOC {}  ; size; returns the block", total_size));
                 self.emit_indent("push rax  ; save list pointer");
                 
                 // Store capacity
@@ -1632,31 +1628,31 @@ impl CodeGenerator {
                         ObjectProperty::Duration => {
                             self.uses_time = true;
                             self.emit_indent("; Timer duration");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
+                            self.emit_timer_address(object);
                             self.emit_indent("TIMER_DURATION_SECONDS rax");
                         }
                         ObjectProperty::Elapsed => {
                             self.uses_time = true;
                             self.emit_indent("; Timer elapsed");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
+                            self.emit_timer_address(object);
                             self.emit_indent("TIMER_ELAPSED_SECONDS rax");
                         }
                         ObjectProperty::StartTime => {
                             self.uses_time = true;
                             self.emit_indent("; Timer start time");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
+                            self.emit_timer_address(object);
                             self.emit_indent("TIMER_START_TIME rax");
                         }
                         ObjectProperty::EndTime => {
                             self.uses_time = true;
                             self.emit_indent("; Timer end time");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
+                            self.emit_timer_address(object);
                             self.emit_indent("TIMER_END_TIME rax");
                         }
                         ObjectProperty::Running => {
                             self.uses_time = true;
                             self.emit_indent("; Timer running status");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
+                            self.emit_timer_address(object);
                             self.emit_indent("mov rax, [rax + TIMER_RUNNING]");
                         }
                     }
@@ -1809,15 +1805,11 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                // COLLECTION_ALLOC page-aligns and runs the -errno failure
-                // test; size is in rax. Returns ptr in rax or 0. A list block
-                // stays out of `alloc_table` (see the list literal above).
-                let mmap_ok = self.new_label("arglist_mmap_ok");
-                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0");
-                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
-                self.emit_indent(&format!("jnz {}", mmap_ok));
-                self.emit_indent("EXIT 1");
-                self.emit(&format!("{}:", mmap_ok));
+                // COLLECTION_ALLOC page-aligns; size is in rax, the block
+                // comes back in rax (memory the system cannot give stops the
+                // program). A list block stays out of `alloc_table` (see the
+                // list literal above).
+                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns the block");
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 // Initialize header
@@ -1878,15 +1870,11 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                // COLLECTION_ALLOC page-aligns and runs the -errno failure
-                // test; size is in rax. Returns ptr in rax or 0. A list block
-                // stays out of `alloc_table` (see the list literal above).
-                let mmap_ok = self.new_label("argraw_mmap_ok");
-                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0");
-                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
-                self.emit_indent(&format!("jnz {}", mmap_ok));
-                self.emit_indent("EXIT 1");
-                self.emit(&format!("{}:", mmap_ok));
+                // COLLECTION_ALLOC page-aligns; size is in rax, the block
+                // comes back in rax (memory the system cannot give stops the
+                // program). A list block stays out of `alloc_table` (see the
+                // list literal above).
+                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns the block");
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 self.emit_indent("mov [r14], r13  ; capacity");
@@ -2227,6 +2215,17 @@ impl CodeGenerator {
             // Type casting
             Expr::Cast { value, target_type, radix } => {
                 self.generate_expr(value);
+                // A value whose type only its runtime tag knows - a loop
+                // variable over a list of unproven elements, a mixed element -
+                // is converted by that tag, the way a typed destination
+                // converts it (#115): `row as a number` reads the number a
+                // text spells, never the text's address (docs/BUGS_FOUND.md
+                // #167).
+                let tag_decides = *radix == 0
+                    && self.emit_dynamic_value_cast_if_needed(value, Some(vartype_of_declared_type(target_type)));
+                if tag_decides {
+                    return;
+                }
                 match target_type {
                     Type::Integer => {
                         // Float to integer - truncate using cvttsd2si
@@ -2446,11 +2445,7 @@ impl CodeGenerator {
                         // down from nanoseconds.
                         self.emit_indent("; Duration in milliseconds");
                         if let Expr::PropertyAccess { object, property } = value.as_ref() {
-                            let offset = self.get_var(object);
-                            self.emit_indent(&format!(
-                                "lea rax, [rbp - {}]",
-                                offset.unwrap_or(0) + 48
-                            ));
+                            self.emit_timer_address(object);
                             match property {
                                 ObjectProperty::Duration => {
                                     self.emit_indent("TIMER_DURATION_MILLISECONDS rax");

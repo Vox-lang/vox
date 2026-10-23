@@ -376,6 +376,17 @@ impl CodeGenerator {
             }
 
             Statement::VarDecl { name, var_type, value } => {
+                match value {
+                    Some(Expr::ListLit { elements }) if elements.is_empty() => {
+                        self.lists_declared_empty.insert(name.clone());
+                    }
+                    None if matches!(var_type, Some(Type::List(_))) => {
+                        self.lists_declared_empty.insert(name.clone());
+                    }
+                    _ => {
+                        self.lists_declared_empty.remove(name);
+                    }
+                }
                 // Decide whether this statement updates a local stack slot or
                 // the global BSS mirror.  A typed declaration (`a number called
                 // x is ...`) always gets a local slot so it can shadow a
@@ -958,6 +969,7 @@ impl CodeGenerator {
             }
 
             Statement::Assignment { name, value } => {
+                self.lists_declared_empty.remove(name);
                 if let Some(offset) = self.get_var(name) {
                     // A `value` local (declared `a value called r`) keeps its
                     // Mixed type across reassignment — overwriting it with the
@@ -1583,6 +1595,8 @@ impl CodeGenerator {
                 // Per-frame, like `variables` itself: a slot offset means
                 // nothing outside the frame it was allocated in.
                 let saved_cell_slots = std::mem::take(&mut self.cell_slots);
+                let saved_lists_declared_empty = std::mem::take(&mut self.lists_declared_empty);
+                let saved_timer_pointer_slots = std::mem::take(&mut self.timer_pointer_slots);
                 let saved_redeclared_parameter_slots =
                     std::mem::take(&mut self.redeclared_parameter_slots);
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
@@ -1692,6 +1706,13 @@ impl CodeGenerator {
                     if matches!(param_type, Type::List(_) | Type::Map(_) | Type::Buffer) {
                         if let Some(slot) = self.get_var(param_name) {
                             self.cell_slots.insert(slot);
+                        }
+                    }
+                    // A timer parameter's slot holds the caller's timer's
+                    // address.
+                    if matches!(param_type, Type::Timer) {
+                        if let Some(slot) = self.get_var(param_name) {
+                            self.timer_pointer_slots.insert(slot);
                         }
                     }
                 }
@@ -1946,6 +1967,8 @@ impl CodeGenerator {
                 self.thing_vars = saved_thing_vars;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
                 self.cell_slots = saved_cell_slots;
+                self.lists_declared_empty = saved_lists_declared_empty;
+                self.timer_pointer_slots = saved_timer_pointer_slots;
                 self.redeclared_parameter_slots = saved_redeclared_parameter_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
@@ -2643,7 +2666,14 @@ impl CodeGenerator {
                         _ => VarType::Unknown,
                     };
                     if elem_type != VarType::Unknown {
-                        self.list_element_types.insert(list.clone(), elem_type);
+                        // A list not declared empty holds elements of its own,
+                        // which this first append cannot vouch for.
+                        let element = if self.lists_declared_empty.contains(list) {
+                            elem_type
+                        } else {
+                            VarType::Mixed
+                        };
+                        self.list_element_types.insert(list.clone(), element);
                     }
                 }
                 
@@ -3667,30 +3697,35 @@ impl CodeGenerator {
                 // Allocate the 8-byte name slot; the timer struct itself needs
                 // TIMER_SIZE (56) bytes below it. Account for the full struct in
                 // the frame size so later variables do not overlap the timer.
-                let offset = self.alloc_var(name);
+                // A main-line timer lives in its `.bss` label instead, which
+                // every function reaches (see `emit_timer_address`).
+                let in_bss = !self.in_function_codegen
+                    && self.timer_globals.contains(name)
+                    && self.global_var_label(name).is_some();
+                if in_bss {
+                    self.variables.remove(name);
+                } else {
+                    let offset = self.alloc_var(name);
+                    self.stack_offset = std::cmp::max(self.stack_offset, offset + 48);
+                }
                 self.variable_types.insert(name.clone(), VarType::Integer); // Track as integer for now
-                self.stack_offset = std::cmp::max(self.stack_offset, offset + 48);
                 self.emit_indent(&format!("; Timer declaration: {}", name));
-                self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48)); // Point to timer area
+                self.emit_timer_address(name);
                 self.emit_indent("TIMER_INIT rax");
             }
             
             Statement::TimerStart { name } => {
                 self.uses_time = true;
-                if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("; Start timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
-                    self.emit_indent("TIMER_START rax");
-                }
+                self.emit_indent(&format!("; Start timer: {}", name));
+                self.emit_timer_address(name);
+                self.emit_indent("TIMER_START rax");
             }
             
             Statement::TimerStop { name } => {
                 self.uses_time = true;
-                if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("; Stop timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
-                    self.emit_indent("TIMER_STOP rax");
-                }
+                self.emit_indent(&format!("; Stop timer: {}", name));
+                self.emit_timer_address(name);
+                self.emit_indent("TIMER_STOP rax");
             }
             
             Statement::Wait { duration, unit } => {

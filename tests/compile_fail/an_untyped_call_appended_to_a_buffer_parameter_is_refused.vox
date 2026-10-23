@@ -1,0 +1,9 @@
+(Compile-fail: the same refusal inside a function, for a buffer parameter.)
+
+To 'untyped' of a text called word. Return "{word}?".
+To fill with a buffer called other.
+  append 'untyped' of "x" to other.
+
+a buffer called other is 64 bytes in size.
+fill of other.
+Print "top: {other}".

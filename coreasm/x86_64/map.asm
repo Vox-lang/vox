@@ -186,10 +186,11 @@ _map_key_dup:
     pop rsi
     cmp rax, -4096              ; raw mmap returns -errno in [-4095,-1]
     jbe .kd_mmap_ok
-    mov rdi, 1                  ; allocation failure: exit(1), as every other
-    mov rax, 60                 ; allocation site here and in list.asm does.
-    syscall                     ; Returning the caller's pointer instead would
-.kd_mmap_ok:                    ; silently restore the borrowing bug.
+    ; No memory to give: the program stops, as at every other allocation
+    ; site. Returning the caller's pointer instead would silently restore
+    ; the borrowing bug.
+    jmp _out_of_memory
+.kd_mmap_ok:
     mov [rel _mk_next], rax
     add rax, rsi
     mov [rel _mk_end], rax
@@ -245,9 +246,7 @@ _map_new:
 
     cmp rax, -4096
     jbe .ok
-    mov rdi, 1
-    mov rax, 60
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .ok:
     mov rdi, rax               ; rdi = new map
     mov [rdi + MAP_CAPACITY_OFFSET], r12
@@ -314,9 +313,7 @@ _map_insert:
     syscall
     cmp rax, -4096
     jbe .gg_mmap_ok
-    mov rdi, 1
-    mov rax, 60
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .gg_mmap_ok:
     mov rdx, rax               ; rdx = new map
     pop rax                    ; new_hash_cap
@@ -647,9 +644,7 @@ _copy_map:
     syscall
     cmp rax, -4096
     jbe .copy_map_mmap_ok
-    mov rdi, 1
-    mov rax, 60                                 ; sys_exit
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .copy_map_mmap_ok:
     mov r15, rax                                ; r15 = new map ptr
 
@@ -751,9 +746,7 @@ _map_keys:
     syscall
     cmp rax, -4096
     jbe .mk_ok
-    mov rdi, 1
-    mov rax, 60
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .mk_ok:
     mov r14, rax               ; r14 = list
     mov [r14 + MAP_CAPACITY_OFFSET], r13       ; capacity
@@ -819,9 +812,7 @@ _map_values:
     syscall
     cmp rax, -4096
     jbe .mv_ok
-    mov rdi, 1
-    mov rax, 60
-    syscall
+    jmp _out_of_memory                      ; no memory to give: the program stops
 .mv_ok:
     mov r14, rax               ; r14 = list
     mov [r14 + MAP_CAPACITY_OFFSET], r13

@@ -1,0 +1,2 @@
+cannot bind 'g' to a number in this declaration; 'g' is already declared as text
+'g' was declared as text at a_local_shadowing_a_global_is_declared_once_per_function.vox:8:17

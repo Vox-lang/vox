@@ -1,0 +1,9 @@
+(Compile-fail: the same, the other way round: the seen file's `Library` line
+ comes first, and this file's own line would rename it.)
+
+see "../include/a_library_called_inner.vox".
+
+Library 'outer' version "0.1".
+
+To 'outer answer'.
+  Return a number, 'inner answer' add 1.
