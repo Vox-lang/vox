@@ -524,9 +524,11 @@ and at least one other M6 architecture.
 - [ ] **Performance.** Done when `vas` is within 10x of `nasm`'s time and under
       50 MB of memory on the corpus, tightening M0.5's 64 MB floor (needs M0.5
       memory reclamation).
-- [ ] **Shared-library output.** `voxelf` writes ET_DYN (dynamic section, symbol
-      tables, relocations, PLT and GOT) and `vas` assembles position-independent
-      code and `extern`. Done when `--shared` needs neither `nasm` nor `ld`.
+- [ ] **Shared-library output.** `voxelf` reads relocatable objects, links
+      several together with their own section names, and writes ET_DYN and
+      dynamic executables (dynamic section, symbol tables, relocations, PLT and
+      GOT); `vas` assembles position-independent code and `extern`. Done when
+      `--shared`, and a program that uses a library, need neither `nasm` nor `ld`.
 - [ ] **Direct emission.** How codegen reaches each target. Done when the
       compiler calls the encoder library directly and skips text assembly.
 - [ ] **More architectures.** Done when arm64 and riscv64 rows sit in the same
