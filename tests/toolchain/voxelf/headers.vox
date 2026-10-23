@@ -126,8 +126,10 @@ a map called 'pi read-only segment' is element 2 of 'pi segments'.
 (Zero-filled data with no initialised data before it opens the writable
  segment itself. It starts in memory on the page after the read-only data
  at the place the file had got to, 0x34, and its alignment of 8 moves it on
- to 0x38; the segment holds no bytes, but its file offset must still agree
- with its address modulo the page size, or the loader refuses the file.)
+ to 0x38. The segment holds no bytes, and its file offset only has to agree
+ with its address modulo the page size: ld gives it the address's place in
+ its page, 0x38. ld pads .bss to a multiple of 8, so the 100 bytes take 104
+ of memory.)
 a list called 'zeros after read-only data' is [
     {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
     {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 4},
@@ -138,9 +140,86 @@ a map called 'the lone zeros' is element 3 of 'zeros placed'.
 a list called 'zeros segments' is 'the segments of' with 'zeros placed' and 0x400000 and 0x120.
 a map called 'zeros segment' is element 3 of 'zeros segments'.
 'expect the number' with "the address of a segment of zero-filled data" and 'zeros segment''s "address" and 0x403038.
-'expect the number' with "the file offset of a segment of zero-filled data" and 'zeros segment''s "file offset" and 0x2038.
+'expect the number' with "the file offset of a segment of zero-filled data" and 'zeros segment''s "file offset" and 0x38.
 'expect the number' with "the file size of a segment of zero-filled data" and 'zeros segment''s "file size" and 0.
-'expect the number' with "the memory size of a segment of zero-filled data" and 'zeros segment''s "memory size" and 100.
+'expect the number' with "the memory size of a segment of zero-filled data" and 'zeros segment''s "memory size" and 104.
+
+(The same, with zero-filled data aligned to a page: its address's place in
+ its page is 0, and ld gives such a segment the file offset of one page.)
+a list called 'paged zeros' is [
+    {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
+    {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 4},
+    {"name": ".bss", "kind": "bss", "size": 100, "alignment": 4096}].
+a list called 'paged zeros placed' is 'place the sections' with 'paged zeros' and 0x400000 and diagnostics.
+a list called 'paged zeros segments' is 'the segments of' with 'paged zeros placed' and 0x400000 and 0x120.
+a map called 'paged zeros segment' is element 3 of 'paged zeros segments'.
+'expect the number' with "the address of a page-aligned segment of zero-filled data" and 'paged zeros segment''s "address" and 0x404000.
+'expect the number' with "the file offset of a page-aligned segment of zero-filled data" and 'paged zeros segment''s "file offset" and 0x1000.
+
+(Data aligned to a page after 8 bytes of read-only data, which ends at
+ 0x402008. Started after that page at the same place, 0x403008, the data
+ would be aligned on to 0x404000 and end at 0x404008, using part of the
+ page at 0x403000 and part of the page at 0x404000, parts that fit in one
+ page together. ld starts it on the fresh page at 0x403000 instead, a page
+ less of memory, and the file is padded to its next page, 0x3000.)
+a list called 'paged data' is [
+    {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
+    {"name": ".rodata", "kind": "rodata", "size": 8, "alignment": 4},
+    {"name": ".data", "kind": "data", "size": 8, "alignment": 4096}].
+a list called 'paged data placed' is 'place the sections' with 'paged data' and 0x400000 and diagnostics.
+a map called 'the paged data' is element 3 of 'paged data placed'.
+'expect the number' with "the address of page-aligned data after read-only data" and 'the paged data''s "address" and 0x403000.
+'expect the number' with "the file offset of page-aligned data after read-only data" and 'the paged data''s "file offset" and 0x3000.
+
+(The last page of the lower half of the address space that Linux gives a
+ program, 0x7fffffffe000 to 0x7ffffffff000: code placed there is placed as
+ from any other base.)
+a list called 'one page of code' is [
+    {"name": ".text", "kind": "text", "size": 12, "alignment": 16}].
+a list called 'top page placed' is 'place the sections' with 'one page of code' and 0x7FFFFFFFE000 and diagnostics.
+'expect the number' with "how many sections were placed on the last page" and 'top page placed''s length and 1.
+a map called 'top page text' is element 1 of 'top page placed'.
+'expect the number' with "the address of code on the last page" and 'top page text''s "address" and 0x7FFFFFFFE0B0.
+
+(The upper half of the address space is placed as the lower half is. Vox
+ holds its 64 bits as the number below zero with the same bits, as no
+ literal can spell them: a kernel's base, 0xffffffff80000000, is 0x80000000
+ below zero, and the top page, 0xfffffffffffff000, is a page below zero.
+ Code from the top page that fills it, the 0xb0 bytes of the headers and
+ 3920 more, ends exactly at 2^64, which ld takes.)
+a list called 'kernel code placed' is 'place the sections' with 'one page of code' and {0 subtract 0x80000000} and diagnostics.
+'expect the number' with "how many sections were placed from a kernel's base" and 'kernel code placed''s length and 1.
+a map called 'kernel text' is element 1 of 'kernel code placed'.
+'expect the number' with "the address of code from a kernel's base" and 'kernel text''s "address" and {0 subtract 0x80000000 add 0xB0}.
+a list called 'a page of code from the headers' is [
+    {"name": ".text", "kind": "text", "size": 3920, "alignment": 16}].
+a list called 'code to 2^64 placed' is 'place the sections' with 'a page of code from the headers' and {0 subtract 4096} and diagnostics.
+'expect the number' with "how many sections were placed to end at 2^64" and 'code to 2^64 placed''s length and 1.
+
+(Memory that does not lie wholly in one half is refused, each with one
+ diagnostic: a base at 2^47, the first address that is not canonical, and
+ one just under 2^63, both between the halves; zero-filled data from the
+ last page and from the last page but one of the lower half, which would
+ run into the addresses between the halves; and zero-filled data, or one
+ byte of code too many, from the top page of the upper half, which would
+ run past 2^64 and wrap round to 0.)
+To 'expect a refused base' with a text called 'what was placed' and a list called sections and a number called 'load base'.
+    Create a buffer called 'base complaints'.
+    a list called 'base placed' is 'place the sections' with sections and 'load base' and 'base complaints'.
+    'expect the number' with "how many sections were placed {what was placed}" and 'base placed''s length and 0.
+    'expect the number' with "how many complaints {what was placed} drew" and {'the number of diagnostics in' with 'base complaints'} and 1.
+
+a list called 'code and zeros' is [
+    {"name": ".text", "kind": "text", "size": 12, "alignment": 16},
+    {"name": ".bss", "kind": "bss", "size": 0x10000, "alignment": 16}].
+a list called 'a byte too much code' is [
+    {"name": ".text", "kind": "text", "size": 3921, "alignment": 16}].
+'expect a refused base' with "from 2^47" and 'one page of code' and 0x800000000000.
+'expect a refused base' with "from just under 2^63" and 'code and zeros' and 0x7FFFFFFFFFFFF000.
+'expect a refused base' with "into the hole from the last page" and 'code and zeros' and 0x7FFFFFFFF000.
+'expect a refused base' with "into the hole from the last page but one" and 'code and zeros' and 0x7FFFFFFFE000.
+'expect a refused base' with "past 2^64 from the top page" and 'code and zeros' and {0 subtract 4096}.
+'expect a refused base' with "a byte past 2^64 from the top page" and 'a byte too much code' and {0 subtract 4096}.
 
 (A layout that cannot be honoured is refused, with one diagnostic for each
  thing wrong and the error flag raised.)
